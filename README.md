@@ -11,7 +11,7 @@ pip install --upgrade pip
 pip install datasets transformers sentencepiece
 pip install --pre "torch>1.13.0.dev20220610" --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 # for Jupyter notebooks
-pip install ipython jupyter ipywidgets
+pip install ipython jupyter ipywidgets ipykernel
 ```
 
 ## Make a database of Danbooru tags, from the booru-chars distribution
@@ -20,15 +20,21 @@ Download a recent booru-chars distribution, e.g. https://nyaa.si/view/1486179.
 You can download with a bittorrent client such as [qBittorrent](https://www.qbittorrent.org/download.php).  
 Download from booru-chars distributions the `*_tags.tsv` and `*_files.tsv`.
 
-Remove from each `V2022B_tags.tsv` any lines that have double-quotes:
+### Sanitize raw inputs
+
+`V2022B_tags.tsv` make contain lines that have double-quotes, like this:
 
 ```
 www.zerochan.net	3633380	"I'm_One_Dapping_Fella"_S...	0	3	COPYRIGHT
 ```
 
+Remove them like so:
+
 ```bash
 find . -type file -name '*_*s.tsv' -exec gawk -i inplace '! /"/' {} \;
 ```
+
+### Create & populate database
 
 Construct a sqlite database.
 
@@ -81,9 +87,3 @@ create index idx_DANB_FR on tags (DANB_FR);
 .import --skip 1 "Safebooru 2022b/V2022B_tags.tsv" tags
 SQL
 ```
-
-<!--
-delete from tags where TAG_CAT IS NULL OR TAG_CAT = 'TAG_CAT';
-delete from tags where TAG LIKE '%	%';
-delete from tags where TAG LIKE '%"%';
--->
