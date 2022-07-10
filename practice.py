@@ -4,10 +4,11 @@ from typing import Tuple, TypeVar, Iterable, Iterator, Callable
 from typing_extensions import TypeAlias
 from enum import Enum, auto
 from math import ceil
-from torch import BoolTensor, LongTensor, FloatTensor, Tensor, sparse_coo_tensor, ones, zeros, tensor
-from itertools import chain, islice, tee, count
+from torch import BoolTensor, LongTensor, FloatTensor, Tensor, sparse_coo_tensor, ones, zeros#, tensor
+from itertools import chain, islice, count#, tee
 from torch import bfloat16
-from torch.optim import SparseAdam, Optimizer
+from torch.optim import Optimizer, Adam#, SparseAdam
+
 
 class Label(Enum):
   touhou = 0
@@ -86,10 +87,12 @@ def captions_to_tensor(captions: _Captions) -> BoolTensor:
   labels: Tuple[int, ...] = tuple(map(get_value, flatten(captions)))
 
   indices_nominal: Tuple[Tuple[int, ...], Tuple[int, ...]] = (row_indices, labels)
+
   return sparse_coo_tensor(
     indices=LongTensor(indices_nominal),
     values=ones(len(row_indices), dtype=bool),
-    dtype=bool)
+    size=(len(captions), vocab_size),
+    dtype=bool).to_dense()
 
 captions: _Captions = (
   (Label.touhou, Label.marisa, Label.blonde_hair),
@@ -187,7 +190,8 @@ class Trainer:
       self.opt.step()
 
 learning_rate = 1e-3
-opt = SparseAdam(model.parameters(), lr=learning_rate)
+# opt = SparseAdam(model.parameters(), lr=learning_rate)
+opt = Adam(model.parameters(), lr=learning_rate)
 loss_fn = CrossEntropyLoss()
 true_value: FloatTensor = zeros(size=(embedding_dim,), dtype=bfloat16)
 trainer = Trainer(model=model, batches=batches, epochs=1, opt=opt, loss_fn=loss_fn, true_value=true_value)
