@@ -4,7 +4,7 @@ from typing import Tuple, TypeVar, Iterable, Iterator, Callable
 from typing_extensions import TypeAlias
 from enum import Enum, auto
 from math import ceil
-from torch import BoolTensor, LongTensor, FloatTensor, Tensor, sparse_coo_tensor, ones, zeros#, tensor
+from torch import IntTensor, LongTensor, FloatTensor, Tensor, sparse_coo_tensor, ones, zeros#, tensor
 from itertools import chain, islice, count#, tee
 from torch import bfloat16
 from torch.optim import Optimizer, Adam#, SparseAdam
@@ -58,9 +58,10 @@ embedding_dim=ceil(512/32100 * vocab_size)
 embedding = Embedding(
   num_embeddings=vocab_size,
   embedding_dim=embedding_dim,
-  sparse=True,
+  sparse=False,
   dtype=bfloat16,
 )
+embedding.weight.requires_grad = True
 
 # model = MultilabelEmbedding(
 #   embedding=embedding
@@ -71,6 +72,7 @@ T = TypeVar('T')
 U = TypeVar('U')
 _Caption: TypeAlias = Tuple[Label, ...]
 _Captions: TypeAlias = Tuple[_Caption, ...]
+_EmbedTensor: TypeAlias = IntTensor
 
 def make_row_indices(enumerated: Tuple[int, _Caption]) -> Tuple[int, ...]:
   (ix, labels) = enumerated
@@ -82,17 +84,20 @@ def flatten(captions: Iterable[Tuple[T, ...]]) -> Iterable[T]:
 def get_value(label: Label) -> int:
   return label.value
 
-def captions_to_tensor(captions: _Captions) -> BoolTensor:
+# Embedding does not accept BoolTensor, ByteTensor, ShortTensor
+# int32 works, but going with int to align with native word size
+def captions_to_tensor(captions: _Captions) -> _EmbedTensor:
   row_indices: Tuple[int, ...] = tuple(flatten(map(make_row_indices, enumerate(captions))))
   labels: Tuple[int, ...] = tuple(map(get_value, flatten(captions)))
 
   indices_nominal: Tuple[Tuple[int, ...], Tuple[int, ...]] = (row_indices, labels)
 
+  # known to work with inte
   return sparse_coo_tensor(
     indices=LongTensor(indices_nominal),
-    values=ones(len(row_indices), dtype=bool),
+    values=ones(len(row_indices), dtype=int),
     size=(len(captions), vocab_size),
-    dtype=bool).to_dense()
+    dtype=int).to_dense()
 
 captions: _Captions = (
   (Label.touhou, Label.marisa, Label.blonde_hair),
@@ -150,14 +155,15 @@ def map_batched_epoch_zipped(zipped_batches: Iterable[Tuple[_EpochZipped[T], ...
     (epoch, *_), *_ = zipped_batch
     yield (epoch, operate(tuple(map(lambda tup: tup[1], zipped_batch))))
 
-batches: Iterable[_EpochZipped[BoolTensor]] = map_batched_epoch_zipped(batches_of(zip_epoch(captions), 2), captions_to_tensor)
+batch_size = 2
+batches: Iterable[_EpochZipped[_EmbedTensor]] = map_batched_epoch_zipped(batches_of(zip_epoch(captions), batch_size), captions_to_tensor)
 
-# batches: Iterable[int, BoolTensor] = map(captions_to_tensor, batches_of(get_caption_iterator, 2))
+# batches: Iterable[int, _EmbedTensor] = map(captions_to_tensor, batches_of(get_caption_iterator, 2))
 
 class Trainer:
   model: Module
   epochs: int
-  batches: Iterable[_EpochZipped[BoolTensor]]
+  batches: Iterable[_EpochZipped[_EmbedTensor]]
   opt: Optimizer
   loss_fn: Callable[[Tensor, Tensor], Tensor]
   true_value: FloatTensor
@@ -166,7 +172,7 @@ class Trainer:
     model: Module,
     loss_fn: Callable[[Tensor, Tensor], Tensor],
     opt: Optimizer,
-    batches: Iterable[_EpochZipped[BoolTensor]],
+    batches: Iterable[_EpochZipped[_EmbedTensor]],
     epochs: int,
     true_value: FloatTensor
   ) -> None:
@@ -193,6 +199,6 @@ learning_rate = 1e-3
 # opt = SparseAdam(model.parameters(), lr=learning_rate)
 opt = Adam(model.parameters(), lr=learning_rate)
 loss_fn = CrossEntropyLoss()
-true_value: FloatTensor = zeros(size=(embedding_dim,), dtype=bfloat16)
+true_value: FloatTensor = zeros(size=(batch_size, vocab_size, embedding_dim), dtype=bfloat16)
 trainer = Trainer(model=model, batches=batches, epochs=1, opt=opt, loss_fn=loss_fn, true_value=true_value)
 trainer.train()
