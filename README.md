@@ -10,8 +10,11 @@ python3 -m venv venv
 pip install --upgrade pip
 pip install datasets transformers sentencepiece
 pip install --pre "torch>1.13.0.dev20220610" --extra-index-url https://download.pytorch.org/whl/nightly/cpu
+pip install wandb
 # for Jupyter notebooks
 pip install ipython jupyter ipywidgets ipykernel
+
+wandb login
 ```
 
 ## Make a database of Danbooru tags, from the booru-chars distribution

@@ -9,6 +9,8 @@ from itertools import chain, islice, count#, tee
 from torch import bfloat16
 from torch.optim import Optimizer, Adam#, SparseAdam
 
+import wandb
+wandb.init(project="booru-encoder")
 
 class Label(Enum):
   touhou = 0
@@ -58,6 +60,8 @@ embedding_dim=ceil(512/32100 * vocab_size)
 embedding = Embedding(
   num_embeddings=vocab_size,
   embedding_dim=embedding_dim,
+  # it didn't support sparse input tensors, so `sparse` property might refer to the output or an intermediate?
+  # turning off on the basis that I'm less sure how frequently intermediates or output would contain zeroes.
   sparse=False,
   dtype=bfloat16,
 )
@@ -92,7 +96,6 @@ def captions_to_tensor(captions: _Captions) -> _EmbedTensor:
 
   indices_nominal: Tuple[Tuple[int, ...], Tuple[int, ...]] = (row_indices, labels)
 
-  # known to work with inte
   return sparse_coo_tensor(
     indices=LongTensor(indices_nominal),
     values=ones(len(row_indices), dtype=int),
@@ -188,7 +191,8 @@ class Trainer:
       if epoch >= self.epochs:
         return
       prediction = self.model(batch_tensor)
-      loss: Tensor = self.loss_fn(prediction, self.true_value)
+      loss: FloatTensor = self.loss_fn(prediction, self.true_value)
+      wandb.log({"loss": loss})
       # if step % 100 == 0:
       print(step, loss.item())
       self.opt.zero_grad()
@@ -196,9 +200,16 @@ class Trainer:
       self.opt.step()
 
 learning_rate = 1e-3
-# opt = SparseAdam(model.parameters(), lr=learning_rate)
 opt = Adam(model.parameters(), lr=learning_rate)
 loss_fn = CrossEntropyLoss()
 true_value: FloatTensor = zeros(size=(batch_size, vocab_size, embedding_dim), dtype=bfloat16)
-trainer = Trainer(model=model, batches=batches, epochs=1, opt=opt, loss_fn=loss_fn, true_value=true_value)
+epochs=1
+trainer = Trainer(model=model, batches=batches, epochs=epochs, opt=opt, loss_fn=loss_fn, true_value=true_value)
+
+wandb.config = {
+  "learning_rate": learning_rate,
+  "epochs": epochs,
+  "batch_size": batch_size
+}
+wandb.watch(model)
 trainer.train()
