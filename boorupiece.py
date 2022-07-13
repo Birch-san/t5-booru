@@ -1,4 +1,6 @@
+from __future__ import annotations
 from typing import Set, List, Union, Tuple, Dict
+from os import PathLike
 from transformers import PretrainedConfig, PreTrainedTokenizer
 from enum import IntEnum
 
@@ -61,3 +63,8 @@ class BooruPiece(PreTrainedTokenizer):
   
   def get_vocab(self) -> Dict[str, int]:
     return { **self.vocab.__members__, **self.added_tokens_encoder }
+  
+  @classmethod
+  def from_pretrained(cls, pretrained_model_name_or_path: Union[str, PathLike], *init_inputs, **kwargs) -> BooruPiece:
+    tokenizer = cls(*init_inputs, tokens=set({}), labels=set({}), **kwargs)
+    return tokenizer

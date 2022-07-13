@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-# https://github.com/huggingface/transformers/blob/main/examples/pytorch/language-modeling/run_mlm_no_trainer.py
 # coding=utf-8
+# https://github.com/huggingface/transformers/blob/main/examples/pytorch/language-modeling/run_mlm_no_trainer.py
 # Copyright 2021 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,7 @@ from pathlib import Path
 
 import datasets
 import torch
-from datasets import load_dataset
+from datasets import IterableDataset, IterableDatasetDict, load_dataset
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -70,6 +70,12 @@ def parse_args():
         type=str,
         default=None,
         help="The name of the dataset to use (via the datasets library).",
+    )
+    parser.add_argument(
+        "--sqlite_db_file",
+        type=str,
+        default=None,
+        help="File path to the booru sqlite database.",
     )
     parser.add_argument(
         "--dataset_config_name",
@@ -110,6 +116,12 @@ def parse_args():
         type=str,
         default=None,
         help="Pretrained tokenizer name or path if not the same as model_name",
+    )
+    parser.add_argument(
+        "--tokenizer_type",
+        type=str,
+        default=None,
+        help="Pretrained tokenizer type",
     )
     parser.add_argument(
         "--use_slow_tokenizer",
@@ -228,8 +240,8 @@ def parse_args():
     args = parser.parse_args()
 
     # Sanity checks
-    if args.dataset_name is None and args.train_file is None and args.validation_file is None:
-        raise ValueError("Need either a dataset name or a training/validation file.")
+    if args.dataset_name is None and args.train_file is None and args.validation_file is None and args.sqlite_db_file is None:
+        raise ValueError("Need either a dataset name, sqlite file or a training/validation file.")
     else:
         if args.train_file is not None:
             extension = args.train_file.split(".")[-1]
@@ -239,6 +251,10 @@ def parse_args():
             extension = args.validation_file.split(".")[-1]
             if extension not in ["csv", "json", "txt"]:
                 raise ValueError("`validation_file` should be a csv, json or txt file.")
+        if args.sqlite_db_file is not None:
+            extension = args.sqlite_db_file.split(".")[-1]
+            if extension != "db":
+                raise ValueError("`sqlite_db_file` should be a db file.")
 
     if args.push_to_hub:
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
@@ -318,6 +334,13 @@ def main():
                 args.dataset_config_name,
                 split=f"train[{args.validation_split_percentage}%:]",
             )
+    elif args.sqlite_db_file is not None:
+        train: IterableDataset = []
+        validation: IterableDataset = []
+        raw_datasets: IterableDatasetDict = {
+            "train": train,
+            "validation": validation
+        }
     else:
         data_files = {}
         if args.train_file is not None:
@@ -357,7 +380,7 @@ def main():
         logger.warning("You are instantiating a new config instance from scratch.")
 
     if args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, use_fast=not args.use_slow_tokenizer)
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, use_fast=not args.use_slow_tokenizer, tokenizer_type=args.tokenizer_type)
     elif args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=not args.use_slow_tokenizer)
     else:

@@ -23,15 +23,19 @@
         "--with_tracking",
         "--report_to",
         "wandb",
-        "--model_name_or_path",
-        "t5",
+        // "--model_name_or_path",
+        // "t5",
         "--config_name",
         "t5-small",
         "--tokenizer_name",
         "boorupiece",
+        "--tokenizer_type",
+        "boorupiece",
         "--use_slow_tokenizer",
         "--output_dir",
-        "out_model"
+        "out_model",
+        "--sqlite_db_file",
+        "${userHome}/machine-learning/booru-chars/booru-chars.db"
       ]
     }
   ]
