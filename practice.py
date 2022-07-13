@@ -191,11 +191,11 @@ class Trainer:
       if epoch >= self.epochs:
         return
       prediction = self.model(batch_tensor)
+      self.opt.zero_grad()
       loss: FloatTensor = self.loss_fn(prediction, self.true_value)
       wandb.log({"loss": loss})
       # if step % 100 == 0:
       print(step, loss.item())
-      self.opt.zero_grad()
       loss.backward()
       self.opt.step()
 

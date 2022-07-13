@@ -11,6 +11,28 @@
       "program": "${workspaceFolder}/practice.py",
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "Python: mlm",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "--with_tracking",
+        "--report_to",
+        "wandb",
+        "--model_name_or_path",
+        "t5",
+        "--config_name",
+        "t5-small",
+        "--tokenizer_name",
+        "boorupiece",
+        "--use_slow_tokenizer",
+        "--output_dir",
+        "out_model"
+      ]
     }
   ]
 }

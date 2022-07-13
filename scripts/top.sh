@@ -10,3 +10,6 @@ END {
 }' "$HOME/machine-learning/tokenization/all-non-general-tags-prevalence.tsv" | \
 sort -rn | \
 awk -F"\t" '$0=$2'
+
+## TODO eliminate dupes between general/propernoun lists. e.g. hololive
+# could just do that at consumption-time in Python

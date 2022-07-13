@@ -1,3 +1,5 @@
 /venv/
 /wandb/
 /out/
+/out_model/
+/__pycache__/
