@@ -1,4 +1,4 @@
-from run_mlm_no_trainer import main as trainer_main
+from run_t5_mlm_flax import main as trainer_main
 from boorupiece import BooruPiece, BooruPieceConfig
 from transformers import AutoConfig, AutoTokenizer
 from transformers.models.auto.tokenization_auto import TOKENIZER_MAPPING_NAMES

@@ -26,6 +26,7 @@ class BooruPiece(PreTrainedTokenizer):
     pad_token="<pad>",
     extra_ids=100,
     additional_special_tokens: Union[List[str], Tuple[str, ...], None] = None,
+    model_max_length=512,
     **kwargs
   ) -> None:
     # Add extra_ids to the special token list
@@ -47,6 +48,7 @@ class BooruPiece(PreTrainedTokenizer):
       pad_token=pad_token,
       extra_ids=extra_ids,
       additional_special_tokens=additional_special_tokens,
+      model_max_length=model_max_length
       **kwargs
     )
 
@@ -55,16 +57,26 @@ class BooruPiece(PreTrainedTokenizer):
     labels_filtered: Set[str] = labels-tokens
     self.labels = labels_filtered
     self.tokens = tokens
-    self.vocab = IntEnum('Tokens', tuple(self.labels.union(self.tokens)), start=0)
+    self.vocab = IntEnum('Tokens', (pad_token, eos_token, unk_token) + tuple(self.labels.union(self.tokens)), start=0)
+  
+  def _convert_token_to_id(self, token: str) -> int:
+    return self.vocab[token]
+
+  def _convert_id_to_token(self, index: int) -> str:
+    """Converts an index (integer) in a token (str) using the vocab."""
+    return self.vocab(index)
   
   @property
   def vocab_size(self) -> int:
+    """
+    `int`: Size of the base vocabulary (without the added tokens).
+    """
     return len(self.vocab) + self._extra_ids
   
   def get_vocab(self) -> Dict[str, int]:
     return { **self.vocab.__members__, **self.added_tokens_encoder }
   
-  @classmethod
-  def from_pretrained(cls, pretrained_model_name_or_path: Union[str, PathLike], *init_inputs, **kwargs) -> BooruPiece:
-    tokenizer = cls(*init_inputs, tokens=set({}), labels=set({}), **kwargs)
-    return tokenizer
+  # @classmethod
+  # def from_pretrained(cls, pretrained_model_name_or_path: Union[str, PathLike], *init_inputs, **kwargs) -> BooruPiece:
+  #   tokenizer = cls(*init_inputs, tokens=set({}), labels=set({}), **kwargs)
+  #   return tokenizer

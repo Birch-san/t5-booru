@@ -31,7 +31,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from itertools import chain
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 from datasets import load_dataset
@@ -59,6 +59,7 @@ from transformers import (
 )
 from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from transformers.utils import get_full_repo_name, send_example_telemetry
+from transformers.tokenization_utils_base import TextInput, PreTokenizedInput
 
 
 MODEL_CONFIG_CLASSES = list(FLAX_MODEL_FOR_MASKED_LM_MAPPING.keys())
@@ -148,16 +149,16 @@ class ModelArguments:
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
+    # tokenizer_name: Optional[str] = field(
+    #     default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
+    # )
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    )
+    # use_fast_tokenizer: bool = field(
+    #     default=True,
+    #     metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
+    # )
     dtype: Optional[str] = field(
         default="float32",
         metadata={
@@ -646,16 +647,16 @@ def main():
     # Preprocessing the datasets.
     # First we tokenize all the texts.
     if training_args.do_train:
-        column_names = datasets["train"].column_names
+        column_names: List[str] = datasets["train"].column_names
     else:
-        column_names = datasets["validation"].column_names
-    text_column_name = "text" if "text" in column_names else column_names[0]
+        column_names: List[str] = datasets["validation"].column_names
+    text_column_name: str = "text" if "text" in column_names else column_names[0]
 
     max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
 
     # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
     # Since we make sure that all sequences are of the same length, no attention_mask is needed.
-    def tokenize_function(examples):
+    def tokenize_function(examples: Dict[str, Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]]]) -> BatchEncoding:
         return tokenizer(examples[text_column_name], return_attention_mask=False)
 
     tokenized_datasets = datasets.map(
@@ -940,7 +941,7 @@ def main():
                 if jax.process_index() == 0:
                     params = jax.device_get(jax.tree_map(lambda x: x[0], state.params))
                     model.save_pretrained(training_args.output_dir, params=params)
-                    tokenizer.save_pretrained(training_args.output_dir)
+                    # tokenizer.save_pretrained(training_args.output_dir)
                     if training_args.push_to_hub:
                         repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
 
