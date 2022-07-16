@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 import numpy as np
+from numpy import ndarray
 from datasets import load_dataset
 from tqdm import tqdm
 
@@ -61,6 +62,7 @@ from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from transformers.utils import get_full_repo_name, send_example_telemetry
 from transformers.tokenization_utils_base import TextInput, PreTokenizedInput
 
+import wandb
 
 MODEL_CONFIG_CLASSES = list(FLAX_MODEL_FOR_MASKED_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -331,13 +333,13 @@ class FlaxDataCollatorForT5MLM:
 
         # convert list to dict and tensorize input
         batch = BatchEncoding(
-            {k: np.array([examples[i][k] for i in range(len(examples))]) for k, v in examples[0].items()}
+            {k: np.array([examples[i][k] for i in range(len(examples))]) for k, _ in examples[0].items()}
         )
 
-        input_ids = batch["input_ids"]
-        batch_size, expandend_input_length = input_ids.shape
+        input_ids: ndarray = batch["input_ids"]
+        batch_size, expanded_input_length = input_ids.shape
 
-        mask_indices = np.asarray([self.random_spans_noise_mask(expandend_input_length) for i in range(batch_size)])
+        mask_indices = np.asarray([self.random_spans_noise_mask(expanded_input_length) for _ in range(batch_size)])
         labels_mask = ~mask_indices
 
         input_ids_sentinel = self.create_sentinel_ids(mask_indices.astype(np.int8))
@@ -365,13 +367,13 @@ class FlaxDataCollatorForT5MLM:
 
         return batch
 
-    def create_sentinel_ids(self, mask_indices):
+    def create_sentinel_ids(self, mask_indices: ndarray) -> ndarray:
         """
         Sentinel ids creation given the indices that should be masked.
         The start indices of each mask are replaced by the sentinel ids in increasing
         order. Consecutive mask indices to be deleted are replaced with `-1`.
         """
-        start_indices = mask_indices - np.roll(mask_indices, 1, axis=-1) * mask_indices
+        start_indices: ndarray = mask_indices - np.roll(mask_indices, 1, axis=-1) * mask_indices
         start_indices[:, 0] = mask_indices[:, 0]
 
         sentinel_ids = np.where(start_indices != 0, np.cumsum(start_indices, axis=-1), start_indices)
@@ -380,7 +382,7 @@ class FlaxDataCollatorForT5MLM:
 
         return sentinel_ids
 
-    def filter_input_ids(self, input_ids, sentinel_ids):
+    def filter_input_ids(self, input_ids: ndarray, sentinel_ids: ndarray) -> ndarray:
         """
         Puts sentinel mask on `input_ids` and fuse consecutive mask tokens into a single mask token by deleting.
         This will reduce the sequence length from `expanded_inputs_length` to `input_length`.
@@ -743,6 +745,7 @@ def main():
             dtype=getattr(jnp, model_args.dtype),
             use_auth_token=True if model_args.use_auth_token else None,
         )
+    
 
     # Data collator
     # This one will take care of randomly masking the tokens.
@@ -861,10 +864,20 @@ def main():
     # Replicate the train state on each device
     state = jax_utils.replicate(state)
 
+    wandb.init(
+        project="t5-booru",
+        entity="mahouko",
+        config={
+        "learning_rate": training_args.learning_rate,
+        "epochs": num_epochs,
+        "batch_size": train_batch_size
+    })
+
     train_time = 0
     epochs = tqdm(range(num_epochs), desc="Epoch ... ", position=0)
     for epoch in epochs:
         # ======================== Training ================================
+        wandb.log({ "epoch": epoch }, commit=False)
         train_start = time.time()
         train_metrics = []
 
@@ -901,10 +914,15 @@ def main():
                 if has_tensorboard and jax.process_index() == 0:
                     write_train_metric(summary_writer, train_metrics, train_time, cur_step)
 
+                learning_rate = train_metric['learning_rate'].mean()
+                loss = train_metric['loss'].mean()
                 epochs.write(
-                    f"Step... ({cur_step} | Loss: {train_metric['loss'].mean()}, Learning Rate:"
-                    f" {train_metric['learning_rate'].mean()})"
+                    f"Step... ({cur_step} | Loss: {loss}, Learning Rate:"
+                    f" {learning_rate})"
                 )
+
+                wandb.config.update({ "learning_rate": learning_rate })
+                wandb.log({ "loss": loss }, step=step)
 
                 train_metrics = []
 

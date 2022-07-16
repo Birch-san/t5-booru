@@ -13,7 +13,7 @@
       "justMyCode": false
     },
     {
-      "name": "Python: mlm",
+      "name": "Python: t5 mlm",
       "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/train.py",
