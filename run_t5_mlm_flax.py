@@ -61,12 +61,13 @@ from transformers import (
 from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from transformers.utils import get_full_repo_name, send_example_telemetry
 from transformers.tokenization_utils_base import TextInput, PreTokenizedInput
+from transformers.models.auto.tokenization_auto import TOKENIZER_MAPPING_NAMES
 
 import wandb
 
 MODEL_CONFIG_CLASSES = list(FLAX_MODEL_FOR_MASKED_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
+TOKENIZER_TYPES = tuple(TOKENIZER_MAPPING_NAMES.keys())
 
 @dataclass
 class TrainingArguments:
@@ -154,6 +155,10 @@ class ModelArguments:
     tokenizer_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
+    tokenizer_type: Optional[str] = field(
+        default=None,
+        metadata={"help": "Tokenizer type (if not the default for your model) from list: " + ", ".join(TOKENIZER_TYPES)}
+    )
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
@@ -193,6 +198,11 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
+    # TODO: can this just be a dataset config name?
+    # sqlite_db_file: Optional[str] = field(
+    #     default=None,
+    #     metadata={"help": "path to SQLite DB from which to load dataset"},
+    # )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
