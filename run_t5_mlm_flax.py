@@ -151,16 +151,16 @@ class ModelArguments:
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
-    # tokenizer_name: Optional[str] = field(
-    #     default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    # )
+    tokenizer_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
+    )
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
-    # use_fast_tokenizer: bool = field(
-    #     default=True,
-    #     metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    # )
+    use_fast_tokenizer: bool = field(
+        default=True,
+        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
+    )
     dtype: Optional[str] = field(
         default="float32",
         metadata={
