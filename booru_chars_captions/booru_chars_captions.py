@@ -8,6 +8,9 @@ from datasets.data_files import DataFilesDict
 from datasets.download.download_manager import DownloadManager
 from datasets.splits import SplitGenerator
 from typing import Optional, Union
+from sqlite3 import Connection, Cursor
+from .db import create_connection
+from .booru_db import get_file_ids
 
 # https://huggingface.co/docs/datasets/v1.2.0/add_dataset.html
 # https://github.com/huggingface/datasets/blob/main/templates/new_dataset_script.py
@@ -70,7 +73,9 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
     )
   
   def _split_generators(self, dl_manager: DownloadManager):
-    print(self.config.sqlite_db_path)
+    conn: Connection = create_connection(self.config.sqlite_db_path)
+    cur = conn.cursor()
+    file_ids: Cursor = get_file_ids()
     """Specify feature dictionary generators and dataset splits.
 
     This function returns a list of `SplitGenerator`s defining how to generate
