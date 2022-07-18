@@ -31,7 +31,7 @@
         "--tokenizer_type",
         "boorupiece",
         "--dataset_name",
-        "booru-chars",
+        "booru_chars_captions/booru_chars_captions.py",
         "--dataset_config_name",
         "sqlite",
         // "--sqlite_db_file",
