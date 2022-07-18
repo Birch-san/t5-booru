@@ -198,11 +198,10 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    # TODO: can this just be a dataset config name?
-    # sqlite_db_file: Optional[str] = field(
-    #     default=None,
-    #     metadata={"help": "path to SQLite DB from which to load dataset"},
-    # )
+    sqlite_db_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "path to SQLite DB from which to load dataset"},
+    )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
@@ -564,8 +563,9 @@ def main():
         datasets = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
+            sqlite_db_path=data_args.sqlite_db_path,
             cache_dir=model_args.cache_dir,
-            use_auth_token=True if model_args.use_auth_token else None,
+            use_auth_token=True if model_args.use_auth_token else None
         )
 
         if "validation" not in datasets.keys():

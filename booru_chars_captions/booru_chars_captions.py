@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import datasets
 # from datasets import GeneratorBasedBuilder, BuilderConfig
 from datasets.info import DatasetInfo
@@ -8,7 +9,20 @@ from datasets.download.download_manager import DownloadManager
 from datasets.splits import SplitGenerator
 from typing import Optional, Union
 
+# https://huggingface.co/docs/datasets/v1.2.0/add_dataset.html
+# https://github.com/huggingface/datasets/blob/main/templates/new_dataset_script.py
+
+
+@dataclass
+class BooruCharsCaptionsConfig(datasets.BuilderConfig):
+  name = "booru_chars_captions"
+  version = Version("0.0.0")
+  description = "BOORU CHARS OPEN DATASET captions"
+  sqlite_db_path: Optional[str] = None
+
 class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
+  config: BooruCharsCaptionsConfig
+  BUILDER_CONFIG_CLASS = BooruCharsCaptionsConfig
   # def __init__(
   #   self,
   #   cache_dir: Optional[str] = None,
@@ -56,6 +70,7 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
     )
   
   def _split_generators(self, dl_manager: DownloadManager):
+    print(self.config.sqlite_db_path)
     """Specify feature dictionary generators and dataset splits.
 
     This function returns a list of `SplitGenerator`s defining how to generate
@@ -138,8 +153,3 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
             encoded with `self.info.features.encode_example({...})`.
     """
     raise NotImplementedError()
-
-class BooruCharsCaptionsBuilderConfig(datasets.BuilderConfig):
-  name = "booru_chars_captions"
-  version = Version("0.0.0")
-  description = "BOORU CHARS OPEN DATASET captions"
