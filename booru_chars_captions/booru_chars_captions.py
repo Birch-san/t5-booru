@@ -7,14 +7,17 @@ from datasets.features import Features
 from datasets.data_files import DataFilesDict
 from datasets.download.download_manager import DownloadManager
 from datasets.splits import SplitGenerator
-from typing import Optional, Union
+from datasets import Split
+from typing import Optional, List, Iterator, Iterable, Tuple, NamedTuple, TypedDict
+from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
+# from contextlib import closing
 from .db import create_connection
-from .booru_db import get_file_ids
+from .booru_db import get_file_ids, file_ids_to_dtos, get_tags, BooruFileId
+from itertools import islice
 
 # https://huggingface.co/docs/datasets/v1.2.0/add_dataset.html
 # https://github.com/huggingface/datasets/blob/main/templates/new_dataset_script.py
-
 
 @dataclass
 class BooruCharsCaptionsConfig(datasets.BuilderConfig):
@@ -23,38 +26,23 @@ class BooruCharsCaptionsConfig(datasets.BuilderConfig):
   description = "BOORU CHARS OPEN DATASET captions"
   sqlite_db_path: Optional[str] = None
 
+Caption: TypeAlias = List[str]
+
+class CaptionRecord(TypedDict):
+  tags: Caption
+
+class CaptionExample(NamedTuple):
+  key: str
+  record: CaptionRecord
+
 class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
   config: BooruCharsCaptionsConfig
   BUILDER_CONFIG_CLASS = BooruCharsCaptionsConfig
-  # def __init__(
-  #   self,
-  #   cache_dir: Optional[str] = None,
-  #   config_name: Optional[str] = None,
-  #   hash: Optional[str] = None,
-  #   base_path: Optional[str] = None,
-  #   info: Optional[DatasetInfo] = None,
-  #   features: Optional[Features] = None,
-  #   use_auth_token: Optional[Union[bool, str]] = None,
-  #   repo_id: Optional[str] = None,
-  #   data_files: Optional[Union[str, list, dict, DataFilesDict]] = None,
-  #   data_dir: Optional[str] = None,
-  #   name="deprecated",
-  #   **config_kwargs,
-  # ) -> None:
-  #   super().__init__(
-  #     cache_dir,
-  #     config_name,
-  #     hash,
-  #     base_path,
-  #     info,
-  #     features,
-  #     use_auth_token,
-  #     repo_id,
-  #     data_files,
-  #     data_dir,
-  #     name,
-  #     **config_kwargs
-  #   )
+  conn: Connection
+
+  def __init__(self, *args, **kwargs) -> None:
+    super().__init__(*args, **kwargs)
+    self.conn = create_connection(self.config.sqlite_db_path)
 
   def _info(self) -> DatasetInfo:
     """Construct the DatasetInfo object. See `DatasetInfo` for details.
@@ -69,13 +57,13 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
       description="BOORU CHARS OPEN DATASET captions",
       homepage="https://www.kaggle.com/datasets/printcraft/booru-chars-2022",
       license="CC0",
-      builder_name="booru_chars_captions"
+      builder_name="booru_chars_captions",
+      features=Features({
+        "tags": [datasets.Value(dtype='string')]
+      })
     )
   
-  def _split_generators(self, dl_manager: DownloadManager):
-    conn: Connection = create_connection(self.config.sqlite_db_path)
-    cur = conn.cursor()
-    file_ids: Cursor = get_file_ids()
+  def _split_generators(self, dl_manager: DownloadManager) -> List[SplitGenerator]:
     """Specify feature dictionary generators and dataset splits.
 
     This function returns a list of `SplitGenerator`s defining how to generate
@@ -118,7 +106,15 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
     Returns:
         `list<SplitGenerator>`.
     """
-    raise NotImplementedError()
+    cur: Cursor = self.conn.cursor()
+    file_ids: Cursor = get_file_ids(cur)
+    file_id_dtos = file_ids_to_dtos(file_ids)
+    return [
+      SplitGenerator(
+        name=Split.TRAIN,
+        gen_kwargs={'file_ids': file_id_dtos}
+      )
+    ]
 
   # def _prepare_split(self, split_generator: SplitGenerator, **kwargs):
   #   """Generate the examples and record them on disk.
@@ -130,7 +126,16 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
   #   """
   #   raise NotImplementedError()
   
-  def _generate_examples(self, **kwargs):
+  def _generate_examples(self, file_ids: Iterable[BooruFileId], **kwargs) -> Iterator[CaptionExample]:
+    for file_id in file_ids:
+      BOORU, FID = file_id
+      print(f'file_ids for {BOORU}, {FID}:')
+      cur: Cursor = self.conn.cursor()
+      tags: List[str] = get_tags(cur, file_id)
+      print(f'len: {len(tags)}')
+      print(tags)
+      caption_record = CaptionRecord(tags=tags)
+      yield CaptionExample(key=f'{BOORU}_{FID}', record=caption_record)
     """Default function generating examples for each `SplitGenerator`.
 
     This function preprocess the examples from the raw data to the preprocessed
@@ -157,4 +162,3 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
             ready to be encoded and written to disk. The example will be
             encoded with `self.info.features.encode_example({...})`.
     """
-    raise NotImplementedError()

@@ -61,6 +61,8 @@
         "10000",
         "--eval_steps",
         "2500",
+        "--validation_split_percentage",
+        "5"
         // "--push_to_hub"
       ]
     }

@@ -68,7 +68,8 @@ create table tags (
   TAG_ID integer,
   TAG_CAT integer,
   DANB_FR text,
-  FOREIGN KEY (BOORU, FID)
+  primary key (BOORU, FID, TAG_ID),
+  foreign key (BOORU, FID)
     REFERENCES files (BOORU, FID)
     ON DELETE CASCADE
     ON UPDATE NO ACTION
