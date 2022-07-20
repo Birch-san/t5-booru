@@ -8,7 +8,7 @@ Trying here to fine-tune an off-the-shelf T5 checkpoint on tag sets from Danboor
 python3 -m venv venv
 . ./venv/bin/activate
 pip install --upgrade pip
-pip install datasets transformers sentencepiece accelerate tokenizers flax wheel jax optax
+pip install datasets transformers sentencepiece accelerate tokenizers flax wheel jax optax more_itertools
 pip install --pre "torch>1.13.0.dev20220610" --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 pip install wandb
 # for Jupyter notebooks

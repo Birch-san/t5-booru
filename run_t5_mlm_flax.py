@@ -202,6 +202,10 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "path to SQLite DB from which to load dataset"},
     )
+    streaming: bool = field(
+        default=False,
+        metadata={"help": "whether to consume dataset as a stream"},
+    )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
@@ -558,30 +562,33 @@ def main():
     #
     # For CSV/JSON files, this script will use the column called 'text' or the first column if no column called
     # 'text' is found. You can easily tweak this behavior (see below).
+    load_datasets_kwargs = {
+        "sqlite_db_path": data_args.sqlite_db_path,
+        "streaming": data_args.streaming,
+        "cache_dir": model_args.cache_dir,
+        "use_auth_token": True if model_args.use_auth_token else None,
+    }
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         datasets = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
-            sqlite_db_path=data_args.sqlite_db_path,
-            cache_dir=model_args.cache_dir,
-            use_auth_token=True if model_args.use_auth_token else None
+            precomputed_validation_split_percentage=data_args.validation_split_percentage,
+            **load_datasets_kwargs
         )
 
         if "validation" not in datasets.keys():
             datasets["validation"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
+                **load_datasets_kwargs,
                 split=f"train[:{data_args.validation_split_percentage}%]",
-                cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
             )
             datasets["train"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
+                **load_datasets_kwargs,
                 split=f"train[{data_args.validation_split_percentage}%:]",
-                cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
             )
     else:
         data_files = {}
@@ -595,24 +602,21 @@ def main():
         datasets = load_dataset(
             extension,
             data_files=data_files,
-            cache_dir=model_args.cache_dir,
-            use_auth_token=True if model_args.use_auth_token else None,
+            **load_datasets_kwargs,
         )
 
         if "validation" not in datasets.keys():
             datasets["validation"] = load_dataset(
                 extension,
                 data_files=data_files,
+                **load_datasets_kwargs,
                 split=f"train[:{data_args.validation_split_percentage}%]",
-                cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
             )
             datasets["train"] = load_dataset(
                 extension,
                 data_files=data_files,
+                **load_datasets_kwargs,
                 split=f"train[{data_args.validation_split_percentage}%:]",
-                cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
             )
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.

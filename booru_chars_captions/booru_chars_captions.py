@@ -7,14 +7,14 @@ from datasets.features import Features
 from datasets.data_files import DataFilesDict
 from datasets.download.download_manager import DownloadManager
 from datasets.splits import SplitGenerator
-from datasets import Split
+from datasets import Split, NamedSplit
 from typing import Optional, List, Iterator, Iterable, Tuple, NamedTuple, TypedDict
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 # from contextlib import closing
 from .db import create_connection
 from .booru_db import get_file_ids, file_ids_to_dtos, get_tags, BooruFileId
-from itertools import islice
+from more_itertools import partition
 
 # https://huggingface.co/docs/datasets/v1.2.0/add_dataset.html
 # https://github.com/huggingface/datasets/blob/main/templates/new_dataset_script.py
@@ -25,6 +25,7 @@ class BooruCharsCaptionsConfig(datasets.BuilderConfig):
   version = Version("0.0.0")
   description = "BOORU CHARS OPEN DATASET captions"
   sqlite_db_path: Optional[str] = None
+  precomputed_validation_split_percentage: Optional[int] = 5
 
 Caption: TypeAlias = List[str]
 
@@ -109,10 +110,23 @@ class BooruCharsCaptions(datasets.GeneratorBasedBuilder):
     cur: Cursor = self.conn.cursor()
     file_ids: Cursor = get_file_ids(cur)
     file_id_dtos = file_ids_to_dtos(file_ids)
+    if self.config.precomputed_validation_split_percentage is None:
+      return [
+        SplitGenerator(
+          name=Split.TRAIN,
+          gen_kwargs={'file_ids': file_id_dtos}
+        )
+      ]
+    retain = lambda enumeration: enumeration[0] % 100 < self.config.precomputed_validation_split_percentage
+    validation, training = partition(retain, enumerate(file_id_dtos))
     return [
       SplitGenerator(
         name=Split.TRAIN,
-        gen_kwargs={'file_ids': file_id_dtos}
+        gen_kwargs={'file_ids': map(lambda enumeration: enumeration[1], training)}
+      ),
+      SplitGenerator(
+        name=Split.VALIDATION,
+        gen_kwargs={'file_ids': map(lambda enumeration: enumeration[1], validation)}
       )
     ]
 
