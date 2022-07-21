@@ -1,8 +1,15 @@
 from __future__ import annotations
 from typing import Set, List, Union, Tuple, Dict
-from os import PathLike
 from transformers import PretrainedConfig, PreTrainedTokenizer
 from enum import IntEnum
+from io import TextIOWrapper
+from os.path import exists, splitext
+import gzip, shutil
+
+VOCAB_FILES_NAMES = {
+  'compressed_general_tokens_file': 'general_tokens.tsv.gz',
+  'compressed_label_tokens_file': 'label_tokens.tsv.gz'
+}
 
 class BooruPieceConfig(PretrainedConfig):
   model_type = "boorupiece"
@@ -13,14 +20,13 @@ class BooruPieceConfig(PretrainedConfig):
     super().__init__(**kwargs)
 
 class BooruPiece(PreTrainedTokenizer):
-  tokens: Set[str]
-  labels: Set[str]
+  vocab_files_names = VOCAB_FILES_NAMES
   vocab: IntEnum
   _extra_ids: int
   def __init__(
     self,
-    tokens: Set[str],
-    labels: Set[str],
+    compressed_general_tokens_file: str,
+    compressed_label_tokens_file: str,
     eos_token="</s>",
     unk_token="<unk>",
     pad_token="<pad>",
@@ -48,16 +54,42 @@ class BooruPiece(PreTrainedTokenizer):
       pad_token=pad_token,
       extra_ids=extra_ids,
       additional_special_tokens=additional_special_tokens,
-      model_max_length=model_max_length
+      model_max_length=model_max_length,
       **kwargs
     )
 
     self._extra_ids = extra_ids
 
-    labels_filtered: Set[str] = labels-tokens
-    self.labels = labels_filtered
-    self.tokens = tokens
-    self.vocab = IntEnum('Tokens', (pad_token, eos_token, unk_token) + tuple(self.labels.union(self.tokens)), start=0)
+    label_tokens_file = self.get_decompressed_path(compressed_label_tokens_file)
+    general_tokens_file = self.get_decompressed_path(compressed_general_tokens_file)
+
+    self.ensure_decompressed(compressed_label_tokens_file, label_tokens_file)
+    self.ensure_decompressed(compressed_general_tokens_file, general_tokens_file)
+
+    # we avoid ingesting directly to set(), in order to preserve insertion-order.
+    labels: List[str] = self.vocab_file_lines(label_tokens_file)
+    tokens: List[str] = self.vocab_file_lines(general_tokens_file)
+    tokens_set: Set[str] = set(tokens)
+
+    labels_filtered: List[str] = [label for label in labels if label not in tokens_set]
+    self.vocab = IntEnum('Tokens', [pad_token, eos_token, unk_token] + labels_filtered + tokens + additional_special_tokens, start=0)
+  
+  @staticmethod
+  def get_decompressed_path(compressed_file_path: str) -> str:
+    decompressed_file_path, *_ = splitext(compressed_file_path)
+    return decompressed_file_path
+  
+  @staticmethod
+  def ensure_decompressed(compressed_file_path: str, decompressed_file_path: str) -> None:
+    if exists(compressed_file_path) and not exists(decompressed_file_path):
+      with gzip.open(compressed_file_path, 'r') as f_in, open(decompressed_file_path, 'wb') as f_out:
+        shutil.copyfileobj(f_in, f_out)
+  
+  @staticmethod
+  def vocab_file_lines(file_path: str) -> list[str]:
+    file: TextIOWrapper = open(file_path, 'r')
+    lines: list[str] = [cleaned for cleaned in (line.rstrip('\n') for line in file.readlines()) if cleaned != '']
+    return lines
   
   def _convert_token_to_id(self, token: str) -> int:
     return self.vocab[token]
@@ -75,8 +107,3 @@ class BooruPiece(PreTrainedTokenizer):
   
   def get_vocab(self) -> Dict[str, int]:
     return { **self.vocab.__members__, **self.added_tokens_encoder }
-  
-  # @classmethod
-  # def from_pretrained(cls, pretrained_model_name_or_path: Union[str, PathLike], *init_inputs, **kwargs) -> BooruPiece:
-  #   tokenizer = cls(*init_inputs, tokens=set({}), labels=set({}), **kwargs)
-  #   return tokenizer

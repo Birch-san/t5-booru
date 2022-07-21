@@ -7,7 +7,7 @@ from datasets.features import Features
 from datasets.data_files import DataFilesDict
 from datasets.download.download_manager import DownloadManager
 from datasets.splits import SplitGenerator
-from datasets import Split, NamedSplit
+from datasets import Split, SplitInfo, NamedSplit
 from typing import Optional, List, Iterator, Iterable, Tuple, NamedTuple, TypedDict
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor

@@ -13,6 +13,14 @@
       "justMyCode": false
     },
     {
+      "name": "Python: t5 play",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/t5_play.py",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
       "name": "Python: t5 mlm",
       "type": "python",
       "request": "launch",

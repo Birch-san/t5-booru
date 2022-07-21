@@ -626,6 +626,7 @@ def main():
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
             model_args.tokenizer_name,
+            tokenizer_type=model_args.tokenizer_type,
             cache_dir=model_args.cache_dir,
             use_fast=model_args.use_fast_tokenizer,
             use_auth_token=True if model_args.use_auth_token else None,
@@ -633,6 +634,7 @@ def main():
     elif model_args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(
             model_args.model_name_or_path,
+            tokenizer_type=model_args.tokenizer_type,
             cache_dir=model_args.cache_dir,
             use_fast=model_args.use_fast_tokenizer,
             use_auth_token=True if model_args.use_auth_token else None,
