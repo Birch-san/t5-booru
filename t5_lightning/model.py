@@ -33,6 +33,7 @@ class T5Booru(LightningModule):
     #   tokenizer_type='boorupiece',
     #   use_fast=False
     # )
+    # TODO we may not need this to be a property of our model; perhaps the dataset we receive could arrive already-tokenized
     self.tokenizer = BooruPiece(
       compressed_general_tokens_file=f"boorupiece/{VOCAB_FILES_NAMES['compressed_general_tokens_file']}",
       compressed_label_tokens_file=f"boorupiece/{VOCAB_FILES_NAMES['compressed_label_tokens_file']}",
