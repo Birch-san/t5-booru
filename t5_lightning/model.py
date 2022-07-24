@@ -16,6 +16,8 @@ class Batch(TypedDict):
 class T5Booru(LightningModule):
   model: T5ForConditionalGeneration
   tokenizer: BooruPiece
+  learning_rate: int
+
   @staticmethod
   def add_model_specific_args(parent_parser: ArgumentParser) -> ArgumentParser:
     parser = parent_parser.add_argument_group("T5Booru")
@@ -41,6 +43,7 @@ class T5Booru(LightningModule):
     )
     config = T5Config.from_pretrained('t5-small', vocab_size=len(self.tokenizer))
     self.model = T5ForConditionalGeneration(config=config)
+    self.learning_rate = args.learning_rate
   
   def _encode(self, input_ids: LongTensor, output_attentions: bool) -> Tuple[LongTensor, Optional[FloatTensor]]:
     encoded: BaseModelOutput = self.model.encoder(input_ids=input_ids, output_attentions=output_attentions)
@@ -83,7 +86,7 @@ class T5Booru(LightningModule):
   def configure_optimizers(self):
     params = list(filter(lambda p: p.requires_grad, self.parameters()))
     optimizer = Adafactor(params, scale_parameter=True, relative_step=True, warmup_init=True, lr=None)
-    scheduler = get_adafactor_schedule(optimizer, initial_lr=self.hparams.learning_rate)
+    scheduler = get_adafactor_schedule(optimizer, initial_lr=self.learning_rate)
 
     return {
       'optimizer': optimizer,
