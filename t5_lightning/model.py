@@ -49,16 +49,16 @@ class T5Booru(LightningModule):
       return encoded.last_hidden_state, attentions
     return encoded.last_hidden_state, None
   
-  def encodeWithAttention(self, input_ids: LongTensor) -> Tuple[LongTensor, FloatTensor]:
+  def _encodeWithAttention(self, input_ids: LongTensor) -> Tuple[LongTensor, FloatTensor]:
     return self._encode(input_ids=input_ids, output_attentions=True)
   
-  def encodeWithoutAttention(self, input_ids: LongTensor) -> LongTensor:
+  def _encodeWithoutAttention(self, input_ids: LongTensor) -> LongTensor:
     last_hidden_state, _ = self._encode(input_ids=input_ids, output_attentions=False)
     return last_hidden_state
 
   def forward(self, batch: Batch) -> Tensor:
-    source, source_mask = self.encodeWithAttention(batch['source'])
-    target: LongTensor = self.encodeWithoutAttention(batch['target'])
+    source, source_mask = self._encodeWithAttention(batch['source'])
+    target: LongTensor = self._encodeWithoutAttention(batch['target'])
 
     # replace padding token id's of the labels by -100 so it's ignored by the loss
     target[target == self.tokenizer.pad_token_id] = -100
