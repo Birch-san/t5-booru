@@ -1,10 +1,13 @@
 from __future__ import annotations
-from typing import Set, List, Union, Tuple, Dict
+from typing import Set, List, Union, Tuple, Dict#, Optional
 from transformers import PretrainedConfig, PreTrainedTokenizer
 from enum import IntEnum
 from io import TextIOWrapper
 from os.path import exists, splitext
 import gzip, shutil
+# from transformers.tokenization_utils_base import TruncationStrategy, TextInput, PreTokenizedInput, EncodedInput
+# from transformers.utils import PaddingStrategy
+# from transformers.utils.generic import TensorType
 
 VOCAB_FILES_NAMES = {
   'compressed_general_tokens_file': 'general_tokens.tsv.gz',
@@ -108,3 +111,30 @@ class BooruPiece(PreTrainedTokenizer):
   
   def get_vocab(self) -> Dict[str, int]:
     return { **self.vocab.__members__, **self.added_tokens_encoder }
+  
+  # def tokenize(self, text: TextInput, **kwargs) -> List[str]:
+  #   return super().tokenize(text, **kwargs)
+
+  # def encode(
+  #   self,
+  #   text: Union[TextInput, PreTokenizedInput, EncodedInput],
+  #   text_pair: Optional[Union[TextInput, PreTokenizedInput, EncodedInput]] = None,
+  #   add_special_tokens: bool = True,
+  #   padding: Union[bool, str, PaddingStrategy] = False,
+  #   truncation: Union[bool, str, TruncationStrategy] = False,
+  #   max_length: Optional[int] = None,
+  #   stride: int = 0,
+  #   return_tensors: Optional[Union[str, TensorType]] = None,
+  #   **kwargs
+  #   ) -> List[int]:
+  #     return super().encode(
+  #       text,
+  #       text_pair,
+  #       add_special_tokens,
+  #       padding,
+  #       truncation,
+  #       max_length,
+  #       stride,
+  #       return_tensors,
+  #       **kwargs
+  #       )

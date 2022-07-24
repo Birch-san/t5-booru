@@ -7,15 +7,12 @@ from torch import Tensor, LongTensor, FloatTensor
 from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
 from typing import Tuple, Optional, TypedDict
 
-from boorupiece.boorupiece import BooruPiece, VOCAB_FILES_NAMES
-
 class Batch(TypedDict):
   source: LongTensor
   target: LongTensor
 
 class T5Booru(LightningModule):
   model: T5ForConditionalGeneration
-  tokenizer: BooruPiece
   learning_rate: int
 
   @staticmethod
@@ -27,22 +24,11 @@ class T5Booru(LightningModule):
   def __init__(
     self,
     args: Namespace,
+    t5_config: T5Config,
     **kwargs,
   ) -> None:
     super().__init__()
-    # self.tokenizer = AutoTokenizer.from_pretrained(
-    #   cls='boorupiece',
-    #   tokenizer_type='boorupiece',
-    #   use_fast=False
-    # )
-    # TODO we may not need this to be a property of our model; perhaps the dataset we receive could arrive already-tokenized
-    self.tokenizer = BooruPiece(
-      compressed_general_tokens_file=f"boorupiece/{VOCAB_FILES_NAMES['compressed_general_tokens_file']}",
-      compressed_label_tokens_file=f"boorupiece/{VOCAB_FILES_NAMES['compressed_label_tokens_file']}",
-      extra_ids=0,
-    )
-    config = T5Config.from_pretrained('t5-small', vocab_size=len(self.tokenizer))
-    self.model = T5ForConditionalGeneration(config=config)
+    self.model = T5ForConditionalGeneration(config=t5_config)
     self.learning_rate = args.learning_rate
   
   def _encode(self, input_ids: LongTensor, output_attentions: bool) -> Tuple[LongTensor, Optional[FloatTensor]]:
