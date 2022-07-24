@@ -19,6 +19,7 @@ class BooruPieceConfig(PretrainedConfig):
   ) -> None:
     super().__init__(**kwargs)
 
+# TODO: regularize input captions, e.g. lowercase, sort labels, split labels on underscore and on hyphen (except where length <= 4, because face tokens)
 class BooruPiece(PreTrainedTokenizer):
   vocab_files_names = VOCAB_FILES_NAMES
   vocab: IntEnum
@@ -72,7 +73,7 @@ class BooruPiece(PreTrainedTokenizer):
     tokens_set: Set[str] = set(tokens)
 
     labels_filtered: List[str] = [label for label in labels if label not in tokens_set]
-    self.vocab = IntEnum('Tokens', [pad_token, eos_token, unk_token] + labels_filtered + tokens + additional_special_tokens, start=0)
+    self.vocab = IntEnum('Tokens', [pad_token, eos_token, unk_token] + labels_filtered + tokens + (additional_special_tokens or []), start=0)
   
   @staticmethod
   def get_decompressed_path(compressed_file_path: str) -> str:

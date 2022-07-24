@@ -79,7 +79,8 @@
       "name": "Python: t5 lightning",
       "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/t5_lightning/main.py",
+      "module": "t5_lightning.main",
+      // "program": "${workspaceFolder}/t5_lightning/main.py",
       "console": "integratedTerminal",
       "justMyCode": false,
       "args": [
