@@ -8,10 +8,6 @@ from booru_chars_captions_lightning.booru_chars_captions import Tokenize, BooruC
 from transformers.models.t5.configuration_t5 import T5Config
 
 def main(args: Namespace) -> None:
-  wandb_logger = WandbLogger(
-    project="t5-booru-lightning",
-    entity="mahouko"
-    )
   # tokenizer = AutoTokenizer.from_pretrained(
   #   cls='boorupiece',
   #   tokenizer_type='boorupiece',
@@ -24,6 +20,10 @@ def main(args: Namespace) -> None:
     )
   t5_config = T5Config.from_pretrained('t5-small', vocab_size=len(tokenizer))
   model = T5Booru(args, t5_config=t5_config)
+  wandb_logger = WandbLogger(
+    project="t5-booru-lightning",
+    entity="mahouko"
+    )
   trainer: Trainer = Trainer.from_argparse_args(args, logger=wandb_logger)
 
   # https://github.com/Lightning-AI/deep-learning-project-template
@@ -39,7 +39,7 @@ def main(args: Namespace) -> None:
   # test: IterableDataset = dataset['test']
   # trainer.test(test_dataloaders=test)
 
-  tokenize: Tokenize = lambda caption: tokenizer.encode(caption)
+  tokenize: Tokenize = lambda caption: tokenizer.encode(caption, is_split_into_words=True)
   dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset(**params, tokenize=tokenize)
   datamodule = BooruCharsCaptions(args, dataset_factory=dataset_factory)
   trainer.fit(model, datamodule=datamodule)

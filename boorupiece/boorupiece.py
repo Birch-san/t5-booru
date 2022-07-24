@@ -5,7 +5,9 @@ from enum import IntEnum
 from io import TextIOWrapper
 from os.path import exists, splitext
 import gzip, shutil
-# from transformers.tokenization_utils_base import TruncationStrategy, TextInput, PreTokenizedInput, EncodedInput
+from transformers.tokenization_utils_base import TextInput, AddedToken, TruncationStrategy, PreTokenizedInput, EncodedInput
+from itertools import chain
+import re
 # from transformers.utils import PaddingStrategy
 # from transformers.utils.generic import TensorType
 
@@ -26,6 +28,7 @@ class BooruPieceConfig(PretrainedConfig):
 class BooruPiece(PreTrainedTokenizer):
   vocab_files_names = VOCAB_FILES_NAMES
   vocab: IntEnum
+  vocab_plus_added_tokens: Dict[str, int]
   _extra_ids: int
   def __init__(
     self,
@@ -77,6 +80,7 @@ class BooruPiece(PreTrainedTokenizer):
 
     labels_filtered: List[str] = [label for label in labels if label not in tokens_set]
     self.vocab = IntEnum('Tokens', [pad_token, eos_token, unk_token] + labels_filtered + tokens + (additional_special_tokens or []), start=0)
+    self.vocab_plus_added_tokens = self._compute_vocab_plus_added_tokens()
   
   @staticmethod
   def get_decompressed_path(compressed_file_path: str) -> str:
@@ -109,11 +113,39 @@ class BooruPiece(PreTrainedTokenizer):
     """
     return len(self.vocab) + self._extra_ids
   
-  def get_vocab(self) -> Dict[str, int]:
+  def _add_tokens(self, new_tokens: Union[List[str], List[AddedToken]], special_tokens: bool = False) -> int:
+    super()._add_tokens(new_tokens, special_tokens)
+    self.vocab_plus_added_tokens = self._compute_vocab_plus_added_tokens()
+  
+  def _compute_vocab_plus_added_tokens(self) -> Dict[str, int]:
     return { **self.vocab.__members__, **self.added_tokens_encoder }
   
-  # def tokenize(self, text: TextInput, **kwargs) -> List[str]:
-  #   return super().tokenize(text, **kwargs)
+  def get_vocab(self) -> Dict[str, int]:
+    return self.vocab_plus_added_tokens
+  
+  def has_token(self, token: str) -> bool:
+    return self.vocab_plus_added_tokens.get(token) is not None
+  
+  regex_delimiter = r'[-_]'
+  def tokenize_label(self, word: str) -> List[str]:
+    lower: str = word.lower()
+    if (self.has_token(lower)):
+      return [lower]
+    # we don't split short tokens on hyphens/underscores, because they're likely to be kaomoji
+    if (len(lower) > 4 and re.search(self.regex_delimiter, lower)):
+      splits: list[str] = re.split(self.regex_delimiter, lower)
+      return list(chain.from_iterable(self.tokenize_label(token) for token in splits))
+    return [self.unk_token]
+  
+  def tokenize(
+    self,
+    text: TextInput,
+    is_split_into_words = False,
+    **kwargs
+    ) -> List[str]:
+      words: List[str] = [text] if is_split_into_words else text.split(' ')
+      tokens: List[str] = list(chain.from_iterable(self.tokenize_label(label) for label in words))
+      return tokens
 
   # def encode(
   #   self,
