@@ -41,7 +41,7 @@ def main(args: Namespace) -> None:
 
   tokenize: Tokenize = lambda caption: tokenizer.encode(caption, is_split_into_words=True)
   dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset(**params, tokenize=tokenize)
-  datamodule = BooruCharsCaptions(args, dataset_factory=dataset_factory)
+  datamodule = BooruCharsCaptions(args, dataset_factory=dataset_factory, pad_token_id=tokenizer.pad_token_id)
   trainer.fit(model, datamodule=datamodule)
   # trainer.test(model, datamodule=datamodule)
   # TODO: actually run the tokenizer over these

@@ -5,11 +5,12 @@ from transformers.models.t5.modeling_t5 import T5ForConditionalGeneration
 from transformers.optimization import Adafactor, get_adafactor_schedule
 from torch import Tensor, LongTensor, FloatTensor
 from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
-from typing import Tuple, Optional, TypedDict
+from typing import Tuple, Optional, TypedDict, List
+from booru_chars_captions_lightning.booru_chars_captions import Tokenized
 
-class Batch(TypedDict):
-  source: LongTensor
-  target: LongTensor
+# class Batch(TypedDict):
+#   source: LongTensor
+#   target: LongTensor
 
 class T5Booru(LightningModule):
   model: T5ForConditionalGeneration
@@ -45,9 +46,9 @@ class T5Booru(LightningModule):
     last_hidden_state, _ = self._encode(input_ids=input_ids, output_attentions=False)
     return last_hidden_state
 
-  def forward(self, batch: Batch) -> Tensor:
-    source, source_mask = self._encodeWithAttention(batch['source'])
-    target: LongTensor = self._encodeWithoutAttention(batch['target'])
+  def forward(self, masked: LongTensor, unmasked: LongTensor) -> Tensor:
+    source, source_mask = self._encodeWithAttention(masked)
+    target: LongTensor = self._encodeWithoutAttention(unmasked)
 
     # replace padding token id's of the labels by -100 so it's ignored by the loss
     target[target == self.tokenizer.pad_token_id] = -100
@@ -58,15 +59,16 @@ class T5Booru(LightningModule):
 
     return loss
 
-  # TODO: figure out how to get from IterableDataset iterand to Batch
-  #       notably, we haven't:
-  #       - regularized the caption (see BooruPiece TODO)
-  #       - tokenized the caption
-  #       - this will give us 'target' but will not give us 'source'
-  #       - make 'source' by splicing away 8 tokens (e.g. same as number of attention heads?)
-  #       - pad all tokenized captions in source and target with pad_token_id, up to the length of the longest tokenized caption in target
-  def training_step(self, batch, batch_idx: int) -> Tensor:
-    loss: Tensor = self(batch)
+  def training_step(self, batch: List[Tokenized], batch_idx: int) -> Tensor:
+    # TODO: dropout (first batch we saw was already 96 tokens long; we should consider getting this down to 32)
+    # TODO: turn List[Tokenized] into LongTensor
+    # TODO: it's probably wasteful to pad it as early as we do (i.e. in DataLoader);
+    #       we could do the padding here, when the time comes to tensorize it
+    #       (and when we know how much dropout is desired)
+    unmasked: LongTensor = batch
+    # TODO: some function over unmasked, to splice out ~8 tokens, and pad the end of the list
+    masked: LongTensor = unmasked
+    loss: Tensor = self(masked, unmasked)
     return loss
 
   def configure_optimizers(self):

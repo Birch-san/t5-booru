@@ -14,6 +14,7 @@ from util.enumeration_to_value import enumeration_to_value
 from contextlib import closing
 
 Caption: TypeAlias = List[str]
+Tokenized: TypeAlias = List[int]
 Tokenize: TypeAlias = Callable[[Caption], List[int]]
 
 class BooruCharsCaptionsDatasetParams(TypedDict):
@@ -59,6 +60,7 @@ class BooruCharsCaptions(LightningDataModule):
   batch_size: int
   validation_split_percentage: int
   test_quantity: int
+  pad_token_id: int
   sqlite_db_path: str
   dataset_factory: BooruCharsCaptionsDatasetFactory
   train_dataset: Optional[BooruCharsCaptionsDataset] = None
@@ -79,9 +81,11 @@ class BooruCharsCaptions(LightningDataModule):
     self,
     args: Namespace,
     dataset_factory: BooruCharsCaptionsDatasetFactory,
+    pad_token_id: int,
   ) -> None:
     super().__init__()
     self.dataset_factory = dataset_factory
+    self.pad_token_id = pad_token_id
     self.batch_size = args.batch_size
     self.validation_split_percentage = args.validation_split_percentage
     self.test_quantity = args.test_quantity
@@ -155,10 +159,19 @@ class BooruCharsCaptions(LightningDataModule):
       if callable(self.close_test):
         self.close_test()
       self.test_dataset = None
+    
+  def pad(self, tokenized: Tokenized, length: int) -> Tokenized:
+    padded: Tokenized = [*tokenized, *[self.pad_token_id] * (length - len(tokenized))]
+    return padded
+  
+  def collate_fn(self, batch: List[Tokenized]) -> List[Tokenized]:
+    pad_length: int = max(map(len, batch))
+    padded: List[Tokenized] = [self.pad(tokenized, pad_length) for tokenized in batch]
+    return padded
 
   def train_dataloader(self) -> DataLoader:
     assert self.train_dataset is not None
-    return DataLoader(self.train_dataset, batch_size=self.batch_size)
+    return DataLoader(self.train_dataset, batch_size=self.batch_size, collate_fn=self.collate_fn)
 
   def val_dataloader(self) -> DataLoader:
     assert self.validation_dataset is not None
