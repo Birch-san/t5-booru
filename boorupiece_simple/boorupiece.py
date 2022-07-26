@@ -28,9 +28,15 @@ class BooruPiece():
       return list(chain.from_iterable(self.tokenize_label(token) for token in splits))
     return [self.token_registry.unk_token]
   
-  def tokenize(self, labels: List[str]) -> List[str]:
+  def tokenize_labels(self, labels: List[str]) -> List[str]:
     tokens: List[str] = list(chain.from_iterable(self.tokenize_label(label) for label in labels))
     return tokens
   
   def encode_tokens(self, tokens: List[str]) -> List[int]:
     return [self.token_registry.token_to_id(token) for token in tokens]
+  
+  def pad_tokens(self, tokens: List[int], length: int) -> List[int]:
+    return [*tokens, *[self.token_registry.pad_token_id] * (length - len(tokens))]
+  
+  # def encode_batch(self, tokens: List[str]) -> List[int]:
+  #   return [self.token_registry.token_to_id(token) for token in tokens]

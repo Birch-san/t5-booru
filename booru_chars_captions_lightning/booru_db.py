@@ -1,5 +1,19 @@
+from __future__ import annotations
 from sqlite3 import Cursor
-from typing import Iterator, NamedTuple, List
+from typing import Iterator, NamedTuple, TypedDict, List, Optional
+from enum import IntEnum
+
+class TagCategory(IntEnum):
+  GENERAL = 0
+  ARTIST = 1
+  # no examples had TAG_CAT 2
+  # yeah TAG_CAT 3 and 4 both appear to represent franchise
+  FRANCHISE_0 = 3
+  FRANCHISE_1 = 4
+
+  @classmethod
+  def parse(cls: TagCategory, category: int) -> Optional[TagCategory]:
+    return cls(category) if category in cls._value2member_map_ else None
 
 # order by MD5 to get a deterministic random, otherwise it's ordered by primary key (booru, fid)
 def get_file_ids(cur: Cursor) -> Cursor:
@@ -40,3 +54,21 @@ where BOORU = :BOORU
 order by TAG ASC
 """, {"BOORU": BOORU, "FID": FID})
   return list(map(lambda result: result[0], cur.fetchall()))
+
+class Tag(TypedDict):
+  TAG: str
+  CAT: Optional[TagCategory]
+
+def get_tag_dtos(cur: Cursor, foreign_key: BooruFileId) -> List[Tag]:
+  BOORU, FID = foreign_key
+  cur.execute("""\
+select TAG, CAT from tags
+where BOORU = :BOORU
+  and FID = :FID
+group by TAG
+order by TAG ASC
+""", {"BOORU": BOORU, "FID": FID})
+  return [{
+    'TAG': result[0],
+    'CAT': TagCategory.parse(int(result[1])),
+  } for result in cur.fetchall()]

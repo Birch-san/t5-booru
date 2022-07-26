@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pytorch_lightning import LightningDataModule
+from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset
 from os.path import join
 from os import environ
@@ -7,15 +8,18 @@ from typing import Optional, Iterator, Iterable, Callable, List, TypedDict
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from .db import create_connection
-from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tags, BooruFileId
+from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_dtos, BooruFileId, Tag
 from argparse import ArgumentParser, Namespace
 from more_itertools import partition
 from util.enumeration_to_value import enumeration_to_value
 from contextlib import closing
 
-Caption: TypeAlias = List[str]
-Tokenized: TypeAlias = List[int]
-Tokenize: TypeAlias = Callable[[Caption], List[int]]
+Tokenize: TypeAlias = Callable[[List[str]], List[int]]
+PadTokens: TypeAlias = Callable[[List[int], int], List[int]]
+
+class Batch(TypedDict):
+  unmasked: LongTensor
+  masked: LongTensor
 
 class BooruCharsCaptionsDatasetParams(TypedDict):
   file_ids: Iterable[BooruFileId]
@@ -24,45 +28,38 @@ class BooruCharsCaptionsDatasetParams(TypedDict):
 class BooruCharsCaptionsDataset(IterableDataset):
   file_ids: Iterable[BooruFileId]
   get_cursor: Callable[[], Cursor]
-  tokenize: Callable[[Caption], List[int]]
   def __init__(
     self,
     file_ids: Iterable[BooruFileId],
     get_cursor: Callable[[], Cursor],
-    tokenize: Tokenize,
   ) -> None:
     super(BooruCharsCaptionsDataset).__init__()
     self.file_ids = file_ids
     self.get_cursor = get_cursor
-    self.tokenize = tokenize
   
-  def to_caption(self, file_id: BooruFileId) -> Caption:
+  def to_caption(self, file_id: BooruFileId) -> List[Tag]:
     # print(f'file_ids for {BOORU}, {FID}:')
     # cur: Cursor = self.get_cursor()
     with closing(self.get_cursor()) as cur:
-      tags: List[str] = get_tags(cur, file_id)
+      tags: List[Tag] = get_tag_dtos(cur, file_id)
       # print(f'len: {len(tags)}')
       # print(tags)
       return tags
   
-  def __iter__(self) -> Iterator[List[int]]:
+  def __iter__(self) -> Iterator[List[Tag]]:
     for file_id in self.file_ids:
-      caption: Caption = self.to_caption(file_id)
-      tokenized: List[int] = self.tokenize(caption)
-      yield tokenized
-
-# inversion-of-control. we don't want BooruCharsCaptions to be polluted with pass-through params.
-# this factory gives us a way to supply a tokenize() function to the BooruCharsCaptionsDataset constructor,
-# without making BooruCharsCaptions depend on tokenize() too.
-BooruCharsCaptionsDatasetFactory: TypeAlias = Callable[[BooruCharsCaptionsDatasetParams], BooruCharsCaptionsDataset]
+      tag_dtos: List[Tag] = self.to_caption(file_id)
+      yield tag_dtos
 
 class BooruCharsCaptions(LightningDataModule):
   batch_size: int
   validation_split_percentage: int
   test_quantity: int
-  pad_token_id: int
+  tokenize: Callable[[List[str]], List[int]]
+  pad_tokens: PadTokens
+  caption_max_labels: int
+  caption_max_tokens: int
   sqlite_db_path: str
-  dataset_factory: BooruCharsCaptionsDatasetFactory
   train_dataset: Optional[BooruCharsCaptionsDataset] = None
   validation_dataset: Optional[BooruCharsCaptionsDataset] = None
   test_dataset: Optional[BooruCharsCaptionsDataset] = None
@@ -80,12 +77,16 @@ class BooruCharsCaptions(LightningDataModule):
   def __init__(
     self,
     args: Namespace,
-    dataset_factory: BooruCharsCaptionsDatasetFactory,
-    pad_token_id: int,
+    tokenize: Tokenize,
+    pad_tokens: PadTokens,
+    caption_max_labels = 32,
+    caption_max_tokens = 32,
   ) -> None:
     super().__init__()
-    self.dataset_factory = dataset_factory
-    self.pad_token_id = pad_token_id
+    self.tokenize = tokenize
+    self.pad_tokens = pad_tokens
+    self.caption_max_labels = caption_max_labels
+    self.caption_max_tokens = caption_max_tokens
     self.batch_size = args.batch_size
     self.validation_split_percentage = args.validation_split_percentage
     self.test_quantity = args.test_quantity
@@ -118,17 +119,13 @@ class BooruCharsCaptions(LightningDataModule):
       retain = lambda enumeration: enumeration[0] % 100 < self.validation_split_percentage
       validation, training = partition(retain, enumerate(file_id_dtos))
       get_cursor = lambda: conn.cursor()
-      self.train_dataset = self.dataset_factory(
-        BooruCharsCaptionsDatasetParams(
-          file_ids=map(enumeration_to_value, training),
-          get_cursor=get_cursor
-        )
+      self.train_dataset = BooruCharsCaptionsDataset(
+        file_ids=map(enumeration_to_value, training),
+        get_cursor=get_cursor
       )
-      self.validation_dataset = self.dataset_factory(
-        BooruCharsCaptionsDatasetParams(
-          file_ids=map(enumeration_to_value, validation),
-          get_cursor=get_cursor
-        )
+      self.validation_dataset = BooruCharsCaptionsDataset(
+        file_ids=map(enumeration_to_value, validation),
+        get_cursor=get_cursor
       )
 
     # Assign test dataset for use in dataloader(s)
@@ -141,11 +138,9 @@ class BooruCharsCaptions(LightningDataModule):
       get_first_n_file_ids(cur, self.test_quantity)
       file_id_dtos: Iterator[BooruFileId] = file_ids_to_dtos(file_ids)
       get_cursor = lambda: conn.cursor()
-      self.test_dataset = self.dataset_factory(
-        BooruCharsCaptionsDatasetParams(
-          file_ids=file_id_dtos,
-          get_cursor=get_cursor
-        )
+      self.test_dataset = BooruCharsCaptionsDataset(
+        file_ids=file_id_dtos,
+        get_cursor=get_cursor
       )
   
   def teardown(self, stage: Optional[str] = None) -> None:
@@ -160,14 +155,25 @@ class BooruCharsCaptions(LightningDataModule):
         self.close_test()
       self.test_dataset = None
     
-  def pad(self, tokenized: Tokenized, length: int) -> Tokenized:
-    padded: Tokenized = [*tokenized, *[self.pad_token_id] * (length - len(tokenized))]
+  def pad(self, tokenized: List[int], length: int) -> List[int]:
+    padded: List[int] = [*tokenized, *[self.pad_token_id] * (length - len(tokenized))]
     return padded
   
-  def collate_fn(self, batch: List[Tokenized]) -> List[Tokenized]:
-    pad_length: int = max(map(len, batch))
-    padded: List[Tokenized] = [self.pad(tokenized, pad_length) for tokenized in batch]
-    return padded
+  def process_caption(self, tag_dtos: List[Tag]) -> List[int]:
+    tags: List[str] = [tag_dto['TAG'] for tag_dto in tag_dtos]
+    tokens: List[int] = self.tokenize(tags)
+    return tokens
+  
+  def collate_fn(self, tag_dtos_batch: List[List[Tag]]) -> Batch:
+    tokens_batch: List[List[int]] = [self.process_caption(tag_dtos) for tag_dtos in tag_dtos_batch]
+    pad_length: int = max(map(len, tokens_batch))
+    padded: List[List[int]] = [self.pad(tokenized, pad_length) for tokenized in tokens_batch]
+    # TODO
+    batch: Batch = {
+      'masked': LongTensor(padded),
+      'unmasked': LongTensor(padded),
+    }
+    return batch
 
   def train_dataloader(self) -> DataLoader:
     assert self.train_dataset is not None

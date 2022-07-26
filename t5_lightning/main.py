@@ -2,23 +2,13 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning import Trainer
 from .model import T5Booru
 from argparse import ArgumentParser, Namespace
-from os.path import join
-from boorupiece.boorupiece import BooruPiece, VOCAB_FILES_NAMES
-from booru_chars_captions_lightning.booru_chars_captions import Tokenize, BooruCharsCaptions, BooruCharsCaptionsDataset, BooruCharsCaptionsDatasetFactory
+from boorupiece_simple.boorupiece import BooruPiece
+from booru_chars_captions_lightning.booru_chars_captions import Tokenize, PadTokens, BooruCharsCaptions
 from transformers.models.t5.configuration_t5 import T5Config
 
 def main(args: Namespace) -> None:
-  # tokenizer = AutoTokenizer.from_pretrained(
-  #   cls='boorupiece',
-  #   tokenizer_type='boorupiece',
-  #   use_fast=False
-  # )
-  tokenizer = BooruPiece(
-    compressed_general_tokens_file=join('boorupiece', VOCAB_FILES_NAMES['compressed_general_tokens_file']),
-    compressed_label_tokens_file=join('boorupiece', VOCAB_FILES_NAMES['compressed_label_tokens_file']),
-    extra_ids=0,
-    )
-  t5_config = T5Config.from_pretrained('t5-small', vocab_size=len(tokenizer))
+  tokenizer = BooruPiece()
+  t5_config = T5Config.from_pretrained('t5-small', vocab_size=tokenizer.token_registry.vocab_size)
   model = T5Booru(args, t5_config=t5_config)
   wandb_logger = WandbLogger(
     project="t5-booru-lightning",
@@ -26,25 +16,15 @@ def main(args: Namespace) -> None:
     )
   trainer: Trainer = Trainer.from_argparse_args(args, logger=wandb_logger)
 
-  # https://github.com/Lightning-AI/deep-learning-project-template
-  # dataset = load_dataset(
-  #   path='booru_chars_captions/booru_chars_captions.py',
-  #   name='sqlite',
-  #   precomputed_validation_split_percentage=5,
-  #   sqlite_db_path=f"{environ['HOME']}/machine-learning/booru-chars/booru-chars.db"
-  # )
-  # train: IterableDataset = dataset['train']
-  # validation: IterableDataset = dataset['validation']
-  # trainer.fit(model, train, validation)
-  # test: IterableDataset = dataset['test']
-  # trainer.test(test_dataloaders=test)
-
-  tokenize: Tokenize = lambda caption: tokenizer.encode(caption, is_split_into_words=True)
-  dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset(**params, tokenize=tokenize)
-  datamodule = BooruCharsCaptions(args, dataset_factory=dataset_factory, pad_token_id=tokenizer.pad_token_id)
+  pad_tokens: PadTokens = tokenizer.pad_tokens
+  tokenize: Tokenize = lambda labels: tokenizer.encode_tokens(tokenizer.tokenize_labels(labels))
+  datamodule = BooruCharsCaptions(
+    args,
+    pad_tokens=pad_tokens,
+    tokenize=tokenize,
+  )
   trainer.fit(model, datamodule=datamodule)
   # trainer.test(model, datamodule=datamodule)
-  # TODO: actually run the tokenizer over these
 
 if __name__ == "__main__":
   # https://pytorch-lightning.readthedocs.io/en/stable/common/hyperparameters.html?highlight=add_model_specific_args#argparser-best-practices
