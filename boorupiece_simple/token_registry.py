@@ -1,10 +1,9 @@
 from __future__ import annotations
-from abc import abstractmethod
-from typing import Iterable, Set, List
+from typing import Iterable, Set, List, Optional
 from enum import IntEnum
 from itertools import chain
 
-class Tokenizer:
+class TokenRegistry:
   vocab: IntEnum
   def __init__(
     self,
@@ -20,11 +19,10 @@ class Tokenizer:
     
     self.vocab = IntEnum('Tokens', tokens_list, start=0)
   
-  def _convert_token_to_id(self, token: str) -> int:
+  def token_to_id(self, token: str) -> int:
     return self.vocab[token]
 
-  def _convert_id_to_token(self, index: int) -> str:
-    """Converts an index (integer) in a token (str) using the vocab."""
+  def id_to_token(self, index: int) -> str:
     return self.vocab(index)
   
   @property
@@ -33,13 +31,9 @@ class Tokenizer:
   
   def has_token(self, token: str) -> bool:
     return self.vocab.__members__.get(token) is not None
-
-  @abstractmethod
-  def tokenize(self, **kwargs) -> List[str]:
-    raise NotImplementedError
   
 
-class TokenizerWithWellKnownTokens(Tokenizer):
+class TokenRegistryWithWellKnownTokens(TokenRegistry):
   vocab: IntEnum
   eos_token: str
   unk_token: str
@@ -55,7 +49,9 @@ class TokenizerWithWellKnownTokens(Tokenizer):
     pad_token="<pad>",
   ) -> None:
     super().__init__(
-      tokens=chain([eos_token, unk_token, pad_token], tokens)
+      # pad token delibately placed at position 0 — as the token you'll encounter most (in a batch):
+      # assigning a zero ID enables it to be used as the basis for describing a batch as a sparse tensor
+      tokens=chain([pad_token, eos_token, unk_token], tokens)
     )
     self.eos_token = eos_token
     self.unk_token = unk_token

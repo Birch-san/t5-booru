@@ -1,61 +1,36 @@
 from __future__ import annotations
-from typing import Iterable, List
-from enum import IntEnum
-from io import TextIOWrapper
-from os.path import exists, splitext
-import gzip, shutil
+from typing import List
 from itertools import chain
-from .simple_tokenizer import TokenizerWithWellKnownTokens
+import re
+from .token_registry import TokenRegistryWithWellKnownTokens
+from .booru_chars_token_registry import BooruCharsTokenRegistry
 
-VOCAB_FILES_NAMES = {
-  'compressed_general_tokens_file': 'general_tokens.tsv.gz',
-  'compressed_label_tokens_file': 'label_tokens.tsv.gz'
-}
-
-class BooruPiece(TokenizerWithWellKnownTokens):
-  vocab: IntEnum
+class BooruPiece():
+  token_registry: TokenRegistryWithWellKnownTokens
   def __init__(
     self,
-    eos_token="</s>",
-    unk_token="<unk>",
-    pad_token="<pad>",
-    extra_tokens: Iterable[str] = [],
+    token_registry: TokenRegistryWithWellKnownTokens = BooruCharsTokenRegistry()
   ) -> None:
-    compressed_label_tokens_file = VOCAB_FILES_NAMES['compressed_label_tokens_file']
-    compressed_general_tokens_file = VOCAB_FILES_NAMES['compressed_general_tokens_file']
-
-    label_tokens_file = self.get_decompressed_path(VOCAB_FILES_NAMES['compressed_label_tokens_file'])
-    general_tokens_file = self.get_decompressed_path(VOCAB_FILES_NAMES['compressed_general_tokens_file'])
-
-    self.ensure_decompressed(compressed_label_tokens_file, label_tokens_file)
-    self.ensure_decompressed(compressed_general_tokens_file, general_tokens_file)
-
-    label_tokens: List[str] = self.vocab_file_lines(label_tokens_file)
-    general_tokens: List[str] = self.vocab_file_lines(general_tokens_file)
-
-    tokens = chain(label_tokens, general_tokens, extra_tokens)
-
-    super().__init__(
-      eos_token=eos_token,
-      unk_token=unk_token,
-      pad_token=pad_token,
-      tokens=tokens
-    )
-    
-
-  @staticmethod
-  def get_decompressed_path(compressed_file_path: str) -> str:
-    decompressed_file_path, *_ = splitext(compressed_file_path)
-    return decompressed_file_path
+    self.token_registry = token_registry
   
   @staticmethod
-  def ensure_decompressed(compressed_file_path: str, decompressed_file_path: str) -> None:
-    if exists(compressed_file_path) and not exists(decompressed_file_path):
-      with gzip.open(compressed_file_path, 'r') as f_in, open(decompressed_file_path, 'wb') as f_out:
-        shutil.copyfileobj(f_in, f_out)
+  def caption_to_labels(caption: str) -> List[str]:
+    return caption.split(' ')
   
-  @staticmethod
-  def vocab_file_lines(file_path: str) -> list[str]:
-    file: TextIOWrapper = open(file_path, 'r')
-    lines: list[str] = [cleaned for cleaned in (line.rstrip('\n') for line in file.readlines()) if cleaned != '']
-    return lines
+  regex_delimiter = r'[-_]'
+  def tokenize_label(self, word: str) -> List[str]:
+    lower: str = word.lower()
+    if (self.token_registry.has_token(lower)):
+      return [lower]
+    # we don't split short tokens on hyphens/underscores, because they're likely to be kaomoji
+    if (len(lower) > 4 and re.search(self.regex_delimiter, lower)):
+      splits: list[str] = re.split(self.regex_delimiter, lower)
+      return list(chain.from_iterable(self.tokenize_label(token) for token in splits))
+    return [self.token_registry.unk_token]
+  
+  def tokenize(self, labels: List[str]) -> List[str]:
+    tokens: List[str] = list(chain.from_iterable(self.tokenize_label(label) for label in labels))
+    return tokens
+  
+  def encode_tokens(self, tokens: List[str]) -> List[int]:
+    return [self.token_registry.token_to_id(token) for token in tokens]
