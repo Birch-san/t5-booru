@@ -32,9 +32,9 @@ tag_category_retentions: Dict[TagCategory, TagRetentionCategory] = {
   TagCategory.FRANCHISE_0: TagRetentionCategory.CRUCIAL,
   TagCategory.FRANCHISE_1: TagRetentionCategory.CRUCIAL,
 }
-def _classify_tag_category(tag_category: TagCategory) -> TagRetentionCategory:
+def _classify_tag_category(tag_category: Optional[TagCategory]) -> TagRetentionCategory:
   # we are targeting Python 3.9 so sadly cannot use structural pattern matching
-  return tag_category_retentions[tag_category]
+  return TagRetentionCategory.EXPENDABLE if tag_category is None else tag_category_retentions[tag_category]
 
 @dataclass
 class Batch:
@@ -177,10 +177,13 @@ class BooruCharsCaptions(LightningDataModule):
   
   def process_caption(self, tag_dtos: List[Tag]) -> List[int]:
     sort_key_fn: Callable[[Tuple[TagRetentionCategory, str]], TagRetentionCategory] = itemgetter(0)
-    by_retention_sorted: List[Tuple[TagRetentionCategory, str]] = [
+    by_retention_list: List[Tuple[TagRetentionCategory, str]] = [
       (_classify_tag_category(tag_dto.CAT), tag_dto.TAG) for tag_dto in tag_dtos
-    ].sort(key=sort_key_fn)
-    by_retention: Dict[TagRetentionCategory, List[str]] = groupby(by_retention_sorted, key=sort_key_fn)
+    ]
+    by_retention_list.sort(key=sort_key_fn)
+    by_retention: Dict[TagRetentionCategory, List[str]] = {
+      key: list(valuesiter) for key, valuesiter in groupby(by_retention_list, key=sort_key_fn)
+    }
     # TODO
     tags: List[str] = [tag_dto.TAG for tag_dto in tag_dtos]
     tokens: List[int] = self.tokenize(tags)
