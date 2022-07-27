@@ -27,7 +27,10 @@ class TagRetentionCategory(IntEnum):
   CRUCIAL = auto()
 
 tag_category_retentions: Dict[TagCategory, TagRetentionCategory] = {
-  TagCategory.GENERAL: TagRetentionCategory.EXPENDABLE
+  TagCategory.GENERAL: TagRetentionCategory.EXPENDABLE,
+  TagCategory.ARTIST: TagRetentionCategory.CRUCIAL,
+  TagCategory.FRANCHISE_0: TagRetentionCategory.CRUCIAL,
+  TagCategory.FRANCHISE_1: TagRetentionCategory.CRUCIAL,
 }
 def _classify_tag_category(tag_category: TagCategory) -> TagRetentionCategory:
   # we are targeting Python 3.9 so sadly cannot use structural pattern matching
