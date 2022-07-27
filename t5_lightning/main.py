@@ -17,7 +17,11 @@ def main(args: Namespace) -> None:
   trainer: Trainer = Trainer.from_argparse_args(args, logger=wandb_logger)
 
   pad_tokens: PadTokens = tokenizer.pad_tokens
-  tokenize: Tokenize = lambda labels: tokenizer.encode_tokens(tokenizer.tokenize_labels(labels))
+  tokenize: Tokenize = lambda labels: tokenizer.encode_tokens(
+    tokenizer.tokenize_labels(
+      tokenizer.regularize_label(label) for label in labels
+      )
+    )
   datamodule = BooruCharsCaptions(
     args,
     pad_tokens=pad_tokens,
