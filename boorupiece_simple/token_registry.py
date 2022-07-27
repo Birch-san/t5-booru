@@ -56,7 +56,7 @@ class TokenRegistryWithWellKnownTokens(TokenRegistry):
     self.eos_token = eos_token
     self.unk_token = unk_token
     self.pad_token = pad_token
-    self.eos_token_id = self._convert_token_to_id(eos_token)
-    self.unk_token_id = self._convert_token_to_id(unk_token)
-    self.pad_token_id = self._convert_token_to_id(pad_token)
+    self.eos_token_id = self.token_to_id(eos_token)
+    self.unk_token_id = self.token_to_id(unk_token)
+    self.pad_token_id = self.token_to_id(pad_token)
   
