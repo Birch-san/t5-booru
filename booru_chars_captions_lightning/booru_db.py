@@ -67,7 +67,7 @@ class Tag:
 def get_tag_dtos(cur: Cursor, foreign_key: BooruFileId) -> List[Tag]:
   BOORU, FID = foreign_key
   cur.execute("""\
-select TAG, CAT from tags
+select TAG, TAG_CAT from tags
 where BOORU = :BOORU
   and FID = :FID
 group by TAG

@@ -158,7 +158,7 @@ class BooruCharsCaptions(LightningDataModule):
     return padded
   
   def process_caption(self, tag_dtos: List[Tag]) -> List[int]:
-    tags: List[str] = [tag_dto['TAG'] for tag_dto in tag_dtos]
+    tags: List[str] = [tag_dto.TAG for tag_dto in tag_dtos]
     tokens: List[int] = self.tokenize(tags)
     return tokens
   
