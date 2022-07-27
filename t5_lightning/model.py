@@ -6,7 +6,7 @@ from transformers.optimization import Adafactor, get_adafactor_schedule
 from torch import Tensor, LongTensor, FloatTensor
 from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
 from typing import Tuple, Optional, TypedDict, List
-from booru_chars_captions_lightning.booru_chars_captions import Tokenized
+from booru_chars_captions_lightning.booru_chars_captions import Batch
 
 # class Batch(TypedDict):
 #   source: LongTensor
@@ -59,7 +59,7 @@ class T5Booru(LightningModule):
 
     return loss
 
-  def training_step(self, batch: List[Tokenized], batch_idx: int) -> Tensor:
+  def training_step(self, batch: Batch, batch_idx: int) -> Tensor:
     # TODO: dropout (first batch we saw was already 96 tokens long; we should consider getting this down to 32)
     # TODO: turn List[Tokenized] into LongTensor
     # TODO: it's probably wasteful to pad it as early as we do (i.e. in DataLoader);
@@ -68,7 +68,7 @@ class T5Booru(LightningModule):
     unmasked: LongTensor = batch
     # TODO: some function over unmasked, to splice out ~8 tokens, and pad the end of the list
     masked: LongTensor = unmasked
-    loss: Tensor = self(masked, unmasked)
+    loss: Tensor = self(masked=batch.masked, unmasked=batch.unmasked)
     return loss
 
   def configure_optimizers(self):

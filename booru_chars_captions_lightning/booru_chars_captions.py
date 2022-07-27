@@ -4,7 +4,7 @@ from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset
 from os.path import join
 from os import environ
-from typing import Optional, Iterator, Iterable, Callable, List, TypedDict
+from typing import Optional, Iterator, Iterable, Callable, List
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from .db import create_connection
@@ -13,17 +13,15 @@ from argparse import ArgumentParser, Namespace
 from more_itertools import partition
 from util.enumeration_to_value import enumeration_to_value
 from contextlib import closing
+from dataclasses import dataclass
 
 Tokenize: TypeAlias = Callable[[List[str]], List[int]]
 PadTokens: TypeAlias = Callable[[List[int], int], List[int]]
 
-class Batch(TypedDict):
+@dataclass
+class Batch:
   unmasked: LongTensor
   masked: LongTensor
-
-class BooruCharsCaptionsDatasetParams(TypedDict):
-  file_ids: Iterable[BooruFileId]
-  get_cursor: Callable[[], Cursor]
 
 class BooruCharsCaptionsDataset(IterableDataset):
   file_ids: Iterable[BooruFileId]

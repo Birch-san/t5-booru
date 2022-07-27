@@ -1,7 +1,8 @@
 from __future__ import annotations
 from sqlite3 import Cursor
-from typing import Iterator, NamedTuple, TypedDict, List, Optional
+from typing import Iterator, NamedTuple, List, Optional
 from enum import IntEnum
+from dataclasses import dataclass
 
 class TagCategory(IntEnum):
   GENERAL = 0
@@ -14,6 +15,9 @@ class TagCategory(IntEnum):
   @classmethod
   def parse(cls: TagCategory, category: int) -> Optional[TagCategory]:
     return cls(category) if category in cls._value2member_map_ else None
+  
+  def is_franchise(self: TagCategory) -> bool:
+    return self is self.FRANCHISE_0 or self.FRANCHISE_1
 
 # order by MD5 to get a deterministic random, otherwise it's ordered by primary key (booru, fid)
 def get_file_ids(cur: Cursor) -> Cursor:
@@ -55,7 +59,8 @@ order by TAG ASC
 """, {"BOORU": BOORU, "FID": FID})
   return list(map(lambda result: result[0], cur.fetchall()))
 
-class Tag(TypedDict):
+@dataclass
+class Tag:
   TAG: str
   CAT: Optional[TagCategory]
 
@@ -68,7 +73,7 @@ where BOORU = :BOORU
 group by TAG
 order by TAG ASC
 """, {"BOORU": BOORU, "FID": FID})
-  return [{
-    'TAG': result[0],
-    'CAT': TagCategory.parse(int(result[1])),
-  } for result in cur.fetchall()]
+  return [Tag(
+    TAG=result[0],
+    CAT=TagCategory.parse(int(result[1])),
+  ) for result in cur.fetchall()]
