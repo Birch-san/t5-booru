@@ -1,13 +1,14 @@
 from __future__ import annotations
-from matplotlib.pyplot import switch_backend
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset
 from os.path import join
 from os import environ
-from typing import Optional, Iterator, Iterable, Callable, List, Dict, Tuple
+from typing import NamedTuple, Optional, Iterator, Iterable, Callable, List, Dict, Tuple
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
+
+from boorupiece_simple.boorupiece import BooruPiece
 from .db import create_connection
 from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_dtos, BooruFileId, Tag, TagCategory
 from argparse import ArgumentParser, Namespace
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 from enum import IntEnum, auto
 from itertools import groupby
 from operator import itemgetter
+from random import sample, shuffle
 
 Tokenize: TypeAlias = Callable[[List[str]], List[int]]
 PadTokens: TypeAlias = Callable[[List[int], int], List[int]]
@@ -35,6 +37,15 @@ tag_category_retentions: Dict[TagCategory, TagRetentionCategory] = {
 def _classify_tag_category(tag_category: Optional[TagCategory]) -> TagRetentionCategory:
   # we are targeting Python 3.9 so sadly cannot use structural pattern matching
   return TagRetentionCategory.EXPENDABLE if tag_category is None else tag_category_retentions[tag_category]
+
+
+class TagWithTokens(NamedTuple):
+  tag: Tag
+  tokens: List[str]
+
+class RetentionClassified(NamedTuple):
+  retention: TagRetentionCategory
+  with_tokens: TagWithTokens
 
 @dataclass
 class Batch:
@@ -72,6 +83,7 @@ class BooruCharsCaptions(LightningDataModule):
   validation_split_percentage: int
   test_quantity: int
   tokenize: Callable[[List[str]], List[int]]
+  tokenizer: BooruPiece
   pad_tokens: PadTokens
   caption_max_labels: int
   caption_max_tokens: int
@@ -94,12 +106,14 @@ class BooruCharsCaptions(LightningDataModule):
     self,
     args: Namespace,
     tokenize: Tokenize,
+    tokenizer: BooruPiece,
     pad_tokens: PadTokens,
     caption_max_labels = 32,
     caption_max_tokens = 32,
   ) -> None:
     super().__init__()
     self.tokenize = tokenize
+    self.tokenizer = tokenizer
     self.pad_tokens = pad_tokens
     self.caption_max_labels = caption_max_labels
     self.caption_max_tokens = caption_max_tokens
@@ -171,28 +185,50 @@ class BooruCharsCaptions(LightningDataModule):
         self.close_test()
       self.test_dataset = None
     
-  def pad(self, tokenized: List[int], length: int) -> List[int]:
+  def _pad(self, tokenized: List[int], length: int) -> List[int]:
     padded: List[int] = [*tokenized, *[self.pad_token_id] * (length - len(tokenized))]
     return padded
+
+  def _cull_caption(self, tag_dtos: List[Tag]) -> List[str]:
+    return None
   
-  def process_caption(self, tag_dtos: List[Tag]) -> List[int]:
-    sort_key_fn: Callable[[Tuple[TagRetentionCategory, str]], TagRetentionCategory] = itemgetter(0)
-    by_retention_list: List[Tuple[TagRetentionCategory, str]] = [
-      (_classify_tag_category(tag_dto.CAT), tag_dto.TAG) for tag_dto in tag_dtos
+  def _process_caption(self, tag_dtos: List[Tag]) -> List[int]:
+    with_tokens: List[TagWithTokens] = [
+      [
+        tag_dto,
+        self.tokenizer.tokenize_label(self.tokenizer.regularize_label(tag_dto.TAG))
+      ] for tag_dto in tag_dtos
+    ]
+
+    sort_key_fn: Callable[[TagWithTokens], TagRetentionCategory] = itemgetter(0)
+    # with_retentions: 
+    by_retention_list: List[Tuple[TagRetentionCategory, str, List[str]]] = [
+      (
+        _classify_tag_category(tag_dto.CAT),
+        tag_dto.TAG,
+        [self.tokenizer.tokenize_label(self.tokenizer.regularize_label(tag_dto.TAG))]
+      ) for tag_dto in tag_dtos
     ]
     by_retention_list.sort(key=sort_key_fn)
     by_retention: Dict[TagRetentionCategory, List[str]] = {
       key: list(valuesiter) for key, valuesiter in groupby(by_retention_list, key=sort_key_fn)
     }
+    expendable = by_retention[TagRetentionCategory.EXPENDABLE]
+    shuffle(expendable)
+    crucial = by_retention[TagRetentionCategory.CRUCIAL]
+    shuffle(crucial)
+
+    self.caption_max_labels
+    sample()
     # TODO
     tags: List[str] = [tag_dto.TAG for tag_dto in tag_dtos]
     tokens: List[int] = self.tokenize(tags)
     return tokens
   
   def collate_fn(self, tag_dtos_batch: List[List[Tag]]) -> Batch:
-    tokens_batch: List[List[int]] = [self.process_caption(tag_dtos) for tag_dtos in tag_dtos_batch]
+    tokens_batch: List[List[int]] = [self._process_caption(tag_dtos) for tag_dtos in tag_dtos_batch]
     pad_length: int = max(map(len, tokens_batch))
-    padded: List[List[int]] = [self.pad(tokenized, pad_length) for tokenized in tokens_batch]
+    padded: List[List[int]] = [self._pad(tokenized, pad_length) for tokenized in tokens_batch]
     # TODO
     batch = Batch(
       masked=LongTensor(padded),

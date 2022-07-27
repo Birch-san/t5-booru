@@ -26,6 +26,7 @@ def main(args: Namespace) -> None:
     args,
     pad_tokens=pad_tokens,
     tokenize=tokenize,
+    tokenizer=tokenizer,
   )
   trainer.fit(model, datamodule=datamodule)
   # trainer.test(model, datamodule=datamodule)
