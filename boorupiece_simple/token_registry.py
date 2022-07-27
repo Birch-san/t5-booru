@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Iterable, Set, List, Optional
+from typing import Iterable, Set, List
 from enum import IntEnum
 from itertools import chain
 

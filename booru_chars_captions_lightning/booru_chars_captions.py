@@ -1,22 +1,37 @@
 from __future__ import annotations
+from matplotlib.pyplot import switch_backend
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset
 from os.path import join
 from os import environ
-from typing import Optional, Iterator, Iterable, Callable, List
+from typing import Optional, Iterator, Iterable, Callable, List, Dict, Tuple
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from .db import create_connection
-from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_dtos, BooruFileId, Tag
+from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_dtos, BooruFileId, Tag, TagCategory
 from argparse import ArgumentParser, Namespace
 from more_itertools import partition
 from util.enumeration_to_value import enumeration_to_value
 from contextlib import closing
 from dataclasses import dataclass
+from enum import IntEnum, auto
+from itertools import groupby
+from operator import itemgetter
 
 Tokenize: TypeAlias = Callable[[List[str]], List[int]]
 PadTokens: TypeAlias = Callable[[List[int], int], List[int]]
+
+class TagRetentionCategory(IntEnum):
+  EXPENDABLE = auto()
+  CRUCIAL = auto()
+
+tag_category_retentions: Dict[TagCategory, TagRetentionCategory] = {
+  TagCategory.GENERAL: TagRetentionCategory.EXPENDABLE
+}
+def _classify_tag_category(tag_category: TagCategory) -> TagRetentionCategory:
+  # we are targeting Python 3.9 so sadly cannot use structural pattern matching
+  return tag_category_retentions[tag_category]
 
 @dataclass
 class Batch:
@@ -158,6 +173,12 @@ class BooruCharsCaptions(LightningDataModule):
     return padded
   
   def process_caption(self, tag_dtos: List[Tag]) -> List[int]:
+    sort_key_fn: Callable[[Tuple[TagRetentionCategory, str]], TagRetentionCategory] = itemgetter(0)
+    by_retention_sorted: List[Tuple[TagRetentionCategory, str]] = [
+      (_classify_tag_category(tag_dto.CAT), tag_dto.TAG) for tag_dto in tag_dtos
+    ].sort(key=sort_key_fn)
+    by_retention: Dict[TagRetentionCategory, List[str]] = groupby(by_retention_sorted, key=sort_key_fn)
+    # TODO
     tags: List[str] = [tag_dto.TAG for tag_dto in tag_dtos]
     tokens: List[int] = self.tokenize(tags)
     return tokens
@@ -167,10 +188,10 @@ class BooruCharsCaptions(LightningDataModule):
     pad_length: int = max(map(len, tokens_batch))
     padded: List[List[int]] = [self.pad(tokenized, pad_length) for tokenized in tokens_batch]
     # TODO
-    batch: Batch = {
-      'masked': LongTensor(padded),
-      'unmasked': LongTensor(padded),
-    }
+    batch = Batch(
+      masked=LongTensor(padded),
+      unmasked=LongTensor(padded),
+    )
     return batch
 
   def train_dataloader(self) -> DataLoader:

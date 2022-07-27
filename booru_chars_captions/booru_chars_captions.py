@@ -1,17 +1,14 @@
 from dataclasses import dataclass
 import datasets
-# from datasets import GeneratorBasedBuilder, BuilderConfig
 from datasets.info import DatasetInfo
 from datasets.utils import Version
 from datasets.features import Features
-from datasets.data_files import DataFilesDict
 from datasets.download.download_manager import DownloadManager
 from datasets.splits import SplitGenerator
-from datasets import Split, SplitInfo, NamedSplit
-from typing import Optional, List, Iterator, Iterable, Tuple, NamedTuple, TypedDict
+from datasets import Split
+from typing import Optional, List, Iterator, Iterable, NamedTuple, TypedDict
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
-# from contextlib import closing
 from .db import create_connection
 from .booru_db import get_file_ids, file_ids_to_dtos, get_tags, BooruFileId
 from more_itertools import partition
