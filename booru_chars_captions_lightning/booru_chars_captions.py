@@ -47,6 +47,14 @@ class RetentionClassified(NamedTuple):
   retention: TagRetentionCategory
   with_tokens: TagWithTokens
 
+class AccumulatedTags(NamedTuple):
+  token_count: int
+  tags_with_tokens: List[TagWithTokens]
+
+class AccumulatedTagsByRetention(NamedTuple):
+  crucial: AccumulatedTags
+  expendable: AccumulatedTags
+
 @dataclass
 class Batch:
   unmasked: LongTensor
@@ -85,7 +93,7 @@ class BooruCharsCaptions(LightningDataModule):
   tokenize: Callable[[List[str]], List[int]]
   tokenizer: BooruPiece
   pad_tokens: PadTokens
-  caption_max_labels: int
+  caption_max_crucial_tokens: int
   caption_max_tokens: int
   sqlite_db_path: str
   train_dataset: Optional[BooruCharsCaptionsDataset] = None
@@ -108,14 +116,14 @@ class BooruCharsCaptions(LightningDataModule):
     tokenize: Tokenize,
     tokenizer: BooruPiece,
     pad_tokens: PadTokens,
-    caption_max_labels = 32,
+    caption_max_crucial_tokens = 4,
     caption_max_tokens = 32,
   ) -> None:
     super().__init__()
     self.tokenize = tokenize
     self.tokenizer = tokenizer
     self.pad_tokens = pad_tokens
-    self.caption_max_labels = caption_max_labels
+    self.caption_max_crucial_tokens = caption_max_crucial_tokens
     self.caption_max_tokens = caption_max_tokens
     self.batch_size = args.batch_size
     self.validation_split_percentage = args.validation_split_percentage
@@ -189,43 +197,62 @@ class BooruCharsCaptions(LightningDataModule):
     padded: List[int] = [*tokenized, *[self.pad_token_id] * (length - len(tokenized))]
     return padded
 
-  def _cull_caption(self, tag_dtos: List[Tag]) -> List[str]:
-    return None
+  # def _cull_caption(self, tag_dtos: List[Tag]) -> List[str]:
+  #   return None
   
-  def _process_caption(self, tag_dtos: List[Tag]) -> List[int]:
+  @staticmethod
+  def _accumulate_until(tags_with_tokens: Iterable[TagWithTokens], limit: int) -> AccumulatedTags:
+    acc: List[TagWithTokens] = []
+    token_count = 0
+    for tag_with_tokens in tags_with_tokens:
+      _, tokens = tag_with_tokens
+      tokens_len: int = len(tokens)
+      if token_count + tokens_len > limit:
+        continue
+      acc.append(tag_with_tokens)
+      token_count += tokens_len
+      if token_count == limit:
+        break
+    return AccumulatedTags(token_count=token_count, tags_with_tokens=acc)
+  
+  def _process_caption(self, tag_dtos: List[Tag]) -> AccumulatedTagsByRetention:
     with_tokens: List[TagWithTokens] = [
-      [
-        tag_dto,
-        self.tokenizer.tokenize_label(self.tokenizer.regularize_label(tag_dto.TAG))
-      ] for tag_dto in tag_dtos
+      TagWithTokens(
+        tag=tag_dto,
+        tokens=self.tokenizer.tokenize_label(self.tokenizer.regularize_label(tag_dto.TAG))
+       ) for tag_dto in tag_dtos
     ]
 
     sort_key_fn: Callable[[TagWithTokens], TagRetentionCategory] = itemgetter(0)
     # with_retentions: 
-    by_retention_list: List[Tuple[TagRetentionCategory, str, List[str]]] = [
-      (
-        _classify_tag_category(tag_dto.CAT),
-        tag_dto.TAG,
-        [self.tokenizer.tokenize_label(self.tokenizer.regularize_label(tag_dto.TAG))]
-      ) for tag_dto in tag_dtos
+    by_retention_list: List[RetentionClassified] = [
+      RetentionClassified(
+        retention=_classify_tag_category(with_tokens_.tag),
+        with_tokens=with_tokens_
+      ) for with_tokens_ in with_tokens
     ]
     by_retention_list.sort(key=sort_key_fn)
-    by_retention: Dict[TagRetentionCategory, List[str]] = {
+    by_retention: Dict[TagRetentionCategory, List[RetentionClassified]] = {
       key: list(valuesiter) for key, valuesiter in groupby(by_retention_list, key=sort_key_fn)
     }
-    expendable = by_retention[TagRetentionCategory.EXPENDABLE]
+    expendable: List[TagWithTokens] = [retention_classified.with_tokens for retention_classified in by_retention[TagRetentionCategory.EXPENDABLE]]
     shuffle(expendable)
-    crucial = by_retention[TagRetentionCategory.CRUCIAL]
+    crucial: List[TagWithTokens] = [retention_classified.with_tokens for retention_classified in by_retention[TagRetentionCategory.CRUCIAL]]
     shuffle(crucial)
 
-    self.caption_max_labels
-    sample()
-    # TODO
-    tags: List[str] = [tag_dto.TAG for tag_dto in tag_dtos]
-    tokens: List[int] = self.tokenize(tags)
-    return tokens
+    retained_crucial: AccumulatedTags = self._accumulate_until(crucial, self.caption_max_crucial_tokens)
+    retain_expendable_count: int = self.caption_max_tokens - retained_crucial.token_count
+    retained_expendable: AccumulatedTags = self._accumulate_until(expendable, retain_expendable_count)
+    return AccumulatedTagsByRetention(
+      crucial=retained_crucial,
+      expendable=retained_expendable,
+    )
+    # tags: List[str] = [tag_dto.TAG for tag_dto in tag_dtos]
+    # tokens: List[int] = self.tokenize(tags)
+    # return tokens
   
   def collate_fn(self, tag_dtos_batch: List[List[Tag]]) -> Batch:
+    # TODO sort the labels, decide which labels or tokens to mask, then map to token integers
     tokens_batch: List[List[int]] = [self._process_caption(tag_dtos) for tag_dtos in tag_dtos_batch]
     pad_length: int = max(map(len, tokens_batch))
     padded: List[List[int]] = [self._pad(tokenized, pad_length) for tokenized in tokens_batch]
