@@ -1,12 +1,14 @@
 from __future__ import annotations
+from functools import reduce
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset
 from os.path import join
 from os import environ
 from typing import NamedTuple, Optional, Iterator, Iterable, Callable, List, Dict, Tuple
-from typing_extensions import TypeAlias
+from typing_extensions import Self, TypeAlias
 from sqlite3 import Connection, Cursor
+from operator import add
 
 from boorupiece_simple.boorupiece import BooruPiece
 from .db import create_connection
@@ -18,8 +20,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from enum import IntEnum, auto
 from itertools import groupby
-from operator import itemgetter
-from random import sample, shuffle
+from random import shuffle
 
 Tokenize: TypeAlias = Callable[[List[str]], List[int]]
 PadTokens: TypeAlias = Callable[[List[int], int], List[int]]
@@ -42,37 +43,67 @@ def _classify_tag_category(tag_category: Optional[TagCategory]) -> TagRetentionC
 class TagWithTokens(NamedTuple):
   tag: Tag
   tokens: List[str]
+  def __len__(self) -> int:
+    return len(self.tokens)
 
 class RetentionClassified(NamedTuple):
   retention: TagRetentionCategory
-  with_tokens: TagWithTokens
+  tag: TagWithTokens
+  def __len__(self) -> int:
+    return len(self.tag)
 
 class AccumulatedTags(NamedTuple):
   token_count: int
-  tags_with_tokens: List[TagWithTokens]
+  tags: List[TagWithTokens]
+  def __len__(self) -> int:
+    return len(self.tags)
 
 class AccumulatedTagsByRetention(NamedTuple):
   crucial: AccumulatedTags
   expendable: AccumulatedTags
+  def __len__(self) -> int:
+    return len(self.crucial) + len(self.expendable)
 
 @dataclass
 class Batch:
   unmasked: LongTensor
   masked: LongTensor
 
+@dataclass
+class BooruCharsCaptionsDatasetParams:
+  file_ids: Iterable[BooruFileId]
+  get_cursor: Callable[[], Cursor]
+
+TokenizeLabel: TypeAlias = Callable[[str], Iterable[str]]
+IsKnownToken: TypeAlias = Callable[[str], bool]
+
 class BooruCharsCaptionsDataset(IterableDataset):
   file_ids: Iterable[BooruFileId]
   get_cursor: Callable[[], Cursor]
+  tokenize_label: TokenizeLabel
+  is_known_token: IsKnownToken
+  caption_min_tokens: int
+  caption_max_crucial_tokens: int
+  caption_max_tokens: int
   def __init__(
     self,
-    file_ids: Iterable[BooruFileId],
-    get_cursor: Callable[[], Cursor],
+    params: BooruCharsCaptionsDatasetParams,
+    tokenize_label: TokenizeLabel,
+    is_known_token: IsKnownToken,
+    caption_min_tokens = 4,
+    caption_max_crucial_tokens = 4,
+    caption_max_tokens = 32,
   ) -> None:
     super(BooruCharsCaptionsDataset).__init__()
-    self.file_ids = file_ids
-    self.get_cursor = get_cursor
+    self.file_ids = params.file_ids
+    self.get_cursor = params.get_cursor
+    self.tokenize_label = tokenize_label
+    self.is_known_token = is_known_token
+    self.caption_min_tokens = caption_min_tokens
+    self.caption_max_crucial_tokens = caption_max_crucial_tokens
+    self.caption_max_tokens = caption_max_tokens
   
-  def to_caption(self, file_id: BooruFileId) -> List[Tag]:
+  def _to_caption(self, file_id: BooruFileId) -> List[Tag]:
     # print(f'file_ids for {BOORU}, {FID}:')
     # cur: Cursor = self.get_cursor()
     with closing(self.get_cursor()) as cur:
@@ -81,20 +112,111 @@ class BooruCharsCaptionsDataset(IterableDataset):
       # print(tags)
       return tags
   
-  def __iter__(self) -> Iterator[List[Tag]]:
+  def _needs_skipping(self, token_count: int) -> bool:
+    return token_count < self.caption_min_tokens
+  
+  def _needs_shortening(self, token_count: int) -> bool:
+    return token_count > self.caption_max_tokens
+  
+  def _join_tokens(self, tags: List[Tag]) -> List[TagWithTokens]:
+    return [
+      TagWithTokens(
+        tag=tag,
+        tokens=self.tokenize_label(tag.TAG)
+       ) for tag in tags
+    ]
+  
+  def _without_unknown_labels(self, tags: Iterable[TagWithTokens]) -> List[TagWithTokens]:
+    return [tag for tag in tags if all(map(self.is_known_token, tag.tokens))]
+  
+  @staticmethod
+  def _count_tokens(tags: Iterable[TagWithTokens]) -> int:
+    return reduce(add, map(len, tags), 0)
+  
+  sort_key_fn: Callable[[RetentionClassified], TagRetentionCategory] = lambda classified: classified.retention
+  @classmethod
+  def _classify_tag_priorities(cls: BooruCharsCaptionsDataset, tags: List[TagWithTokens]) -> Dict[TagRetentionCategory, List[RetentionClassified]]:
+    """
+    We prefer not to throw away crucial tags like character names.
+    Attach to each tag a designation to help us prioritize.
+    """
+    by_retention_list: List[RetentionClassified] = [
+      RetentionClassified(
+        retention=_classify_tag_category(tag.tag.CAT),
+        tag=tag
+      ) for tag in tags
+    ]
+    by_retention_list.sort(key=cls.sort_key_fn)
+    by_retention: Dict[TagRetentionCategory, List[RetentionClassified]] = {
+      key: list(valuesiter) for key, valuesiter in groupby(by_retention_list, key=cls.sort_key_fn)
+    }
+    return by_retention
+  
+  @staticmethod
+  def _accumulate_until(tags: Iterable[TagWithTokens], limit: int) -> AccumulatedTags:
+    acc: List[TagWithTokens] = []
+    token_count = 0
+    for tag in tags:
+      tokens_len: int = len(tag)
+      if token_count + tokens_len > limit:
+        continue
+      acc.append(tag)
+      token_count += tokens_len
+      if token_count == limit:
+        break
+    return AccumulatedTags(token_count=token_count, tags=acc)
+
+  def _shorten(self, tags: List[TagWithTokens]) -> AccumulatedTagsByRetention:
+    """
+    Some of these captions have about 100 tags.
+    We wanna get it down to about 32.
+    """
+    classifieds: Dict[TagRetentionCategory, List[RetentionClassified]] = self._classify_tag_priorities(tags)
+
+    expendable: List[TagWithTokens] = [classified.tag for classified in classifieds.get(TagRetentionCategory.EXPENDABLE, [])]
+    crucial: List[TagWithTokens] = [classified.tag for classified in classifieds.get(TagRetentionCategory.CRUCIAL, [])]
+    shuffle(expendable)
+    shuffle(crucial)
+
+    retained_crucial: AccumulatedTags = self._accumulate_until(crucial, self.caption_max_crucial_tokens)
+    retain_expendable_count: int = self.caption_max_tokens - retained_crucial.token_count
+    retained_expendable: AccumulatedTags = self._accumulate_until(expendable, retain_expendable_count)
+    return AccumulatedTagsByRetention(
+      crucial=retained_crucial,
+      expendable=retained_expendable,
+    )
+
+  def __iter__(self) -> Iterator[List[TagWithTokens]]:
     for file_id in self.file_ids:
-      tag_dtos: List[Tag] = self.to_caption(file_id)
-      yield tag_dtos
+      tags: List[Tag] = self._to_caption(file_id)
+      with_tokens: List[TagWithTokens] = self._join_tokens(tags)
+      without_unknowns: List[TagWithTokens] = self._without_unknown_labels(with_tokens)
+      tokens_total: int = self._count_tokens(without_unknowns)
+      if self._needs_skipping(tokens_total):
+        continue
+
+      if not self._needs_shortening(tokens_total):
+        yield without_unknowns
+      
+      shortened: AccumulatedTagsByRetention = self._shorten(without_unknowns)
+      tokens_total: int = len(shortened)
+
+      if self._needs_skipping(tokens_total):
+        continue
+
+      union: List[TagWithTokens] = [*shortened.crucial.tags, *shortened.expendable.tags]
+      union.sort(key=lambda tag: tag.tag.TAG)
+
+      yield union
+
+BooruCharsCaptionsDatasetFactory: TypeAlias = Callable[[BooruCharsCaptionsDatasetParams], BooruCharsCaptionsDataset]
 
 class BooruCharsCaptions(LightningDataModule):
   batch_size: int
   validation_split_percentage: int
   test_quantity: int
-  tokenize: Callable[[List[str]], List[int]]
-  tokenizer: BooruPiece
   pad_tokens: PadTokens
-  caption_max_crucial_tokens: int
-  caption_max_tokens: int
+  dataset_factory: BooruCharsCaptionsDatasetFactory
   sqlite_db_path: str
   train_dataset: Optional[BooruCharsCaptionsDataset] = None
   validation_dataset: Optional[BooruCharsCaptionsDataset] = None
@@ -113,18 +235,12 @@ class BooruCharsCaptions(LightningDataModule):
   def __init__(
     self,
     args: Namespace,
-    tokenize: Tokenize,
-    tokenizer: BooruPiece,
     pad_tokens: PadTokens,
-    caption_max_crucial_tokens = 4,
-    caption_max_tokens = 32,
+    dataset_factory: BooruCharsCaptionsDatasetFactory,
   ) -> None:
     super().__init__()
-    self.tokenize = tokenize
-    self.tokenizer = tokenizer
     self.pad_tokens = pad_tokens
-    self.caption_max_crucial_tokens = caption_max_crucial_tokens
-    self.caption_max_tokens = caption_max_tokens
+    self.dataset_factory = dataset_factory
     self.batch_size = args.batch_size
     self.validation_split_percentage = args.validation_split_percentage
     self.test_quantity = args.test_quantity
@@ -157,13 +273,17 @@ class BooruCharsCaptions(LightningDataModule):
       retain = lambda enumeration: enumeration[0] % 100 < self.validation_split_percentage
       validation, training = partition(retain, enumerate(file_id_dtos))
       get_cursor = lambda: conn.cursor()
-      self.train_dataset = BooruCharsCaptionsDataset(
-        file_ids=map(enumeration_to_value, training),
-        get_cursor=get_cursor
+      self.train_dataset = self.dataset_factory(
+        BooruCharsCaptionsDatasetParams(
+          file_ids=map(enumeration_to_value, training),
+          get_cursor=get_cursor
+        )
       )
-      self.validation_dataset = BooruCharsCaptionsDataset(
-        file_ids=map(enumeration_to_value, validation),
-        get_cursor=get_cursor
+      self.validation_dataset = self.dataset_factory(
+        BooruCharsCaptionsDatasetParams(
+          file_ids=map(enumeration_to_value, validation),
+          get_cursor=get_cursor
+        )
       )
 
     # Assign test dataset for use in dataloader(s)
@@ -176,9 +296,11 @@ class BooruCharsCaptions(LightningDataModule):
       get_first_n_file_ids(cur, self.test_quantity)
       file_id_dtos: Iterator[BooruFileId] = file_ids_to_dtos(file_ids)
       get_cursor = lambda: conn.cursor()
-      self.test_dataset = BooruCharsCaptionsDataset(
-        file_ids=file_id_dtos,
-        get_cursor=get_cursor
+      self.test_dataset = self.dataset_factory(
+        BooruCharsCaptionsDatasetParams(
+          file_ids=file_id_dtos,
+          get_cursor=get_cursor
+        )
       )
   
   def teardown(self, stage: Optional[str] = None) -> None:
@@ -196,66 +318,12 @@ class BooruCharsCaptions(LightningDataModule):
   def _pad(self, tokenized: List[int], length: int) -> List[int]:
     padded: List[int] = [*tokenized, *[self.pad_token_id] * (length - len(tokenized))]
     return padded
-
-  # def _cull_caption(self, tag_dtos: List[Tag]) -> List[str]:
-  #   return None
   
-  @staticmethod
-  def _accumulate_until(tags_with_tokens: Iterable[TagWithTokens], limit: int) -> AccumulatedTags:
-    acc: List[TagWithTokens] = []
-    token_count = 0
-    for tag_with_tokens in tags_with_tokens:
-      _, tokens = tag_with_tokens
-      tokens_len: int = len(tokens)
-      if token_count + tokens_len > limit:
-        continue
-      acc.append(tag_with_tokens)
-      token_count += tokens_len
-      if token_count == limit:
-        break
-    return AccumulatedTags(token_count=token_count, tags_with_tokens=acc)
-  
-  def _process_caption(self, tag_dtos: List[Tag]) -> AccumulatedTagsByRetention:
-    with_tokens: List[TagWithTokens] = [
-      TagWithTokens(
-        tag=tag_dto,
-        tokens=self.tokenizer.tokenize_label(self.tokenizer.regularize_label(tag_dto.TAG))
-       ) for tag_dto in tag_dtos
-    ]
-
-    sort_key_fn: Callable[[TagWithTokens], TagRetentionCategory] = itemgetter(0)
-    # with_retentions: 
-    by_retention_list: List[RetentionClassified] = [
-      RetentionClassified(
-        retention=_classify_tag_category(with_tokens_.tag),
-        with_tokens=with_tokens_
-      ) for with_tokens_ in with_tokens
-    ]
-    by_retention_list.sort(key=sort_key_fn)
-    by_retention: Dict[TagRetentionCategory, List[RetentionClassified]] = {
-      key: list(valuesiter) for key, valuesiter in groupby(by_retention_list, key=sort_key_fn)
-    }
-    expendable: List[TagWithTokens] = [retention_classified.with_tokens for retention_classified in by_retention[TagRetentionCategory.EXPENDABLE]]
-    shuffle(expendable)
-    crucial: List[TagWithTokens] = [retention_classified.with_tokens for retention_classified in by_retention[TagRetentionCategory.CRUCIAL]]
-    shuffle(crucial)
-
-    retained_crucial: AccumulatedTags = self._accumulate_until(crucial, self.caption_max_crucial_tokens)
-    retain_expendable_count: int = self.caption_max_tokens - retained_crucial.token_count
-    retained_expendable: AccumulatedTags = self._accumulate_until(expendable, retain_expendable_count)
-    return AccumulatedTagsByRetention(
-      crucial=retained_crucial,
-      expendable=retained_expendable,
-    )
-    # tags: List[str] = [tag_dto.TAG for tag_dto in tag_dtos]
-    # tokens: List[int] = self.tokenize(tags)
-    # return tokens
-  
-  def collate_fn(self, tag_dtos_batch: List[List[Tag]]) -> Batch:
+  def collate_fn(self, tag_dtos_batch: List[List[TagWithTokens]]) -> Batch:
     # TODO sort the labels, decide which labels or tokens to mask, then map to token integers
-    tokens_batch: List[List[int]] = [self._process_caption(tag_dtos) for tag_dtos in tag_dtos_batch]
-    pad_length: int = max(map(len, tokens_batch))
-    padded: List[List[int]] = [self._pad(tokenized, pad_length) for tokenized in tokens_batch]
+    # tokens_batch: List[List[int]] = [self._process_caption(tag_dtos) for tag_dtos in tag_dtos_batch]
+    pad_length: int = max(map(len, tag_dtos_batch))
+    padded: List[List[int]] = [self._pad(tokenized, pad_length) for tokenized in tag_dtos_batch]
     # TODO
     batch = Batch(
       masked=LongTensor(padded),

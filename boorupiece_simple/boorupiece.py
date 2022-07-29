@@ -40,7 +40,7 @@ class BooruPiece():
     if self._label_eligible_for_split(label):
       splits: list[str] = self._split_label(label)
       if len(splits) > 1:
-        return chain.from_iterable(self.tokenize_label(token) for token in splits)
+        return tuple(chain.from_iterable(self.tokenize_label(token) for token in splits))
     return (self.token_registry.unk_token,)
   
   def tokenize_labels(self, labels: Iterable[str]) -> Iterable[str]:

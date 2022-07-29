@@ -3,7 +3,7 @@ from pytorch_lightning import Trainer
 from .model import T5Booru
 from argparse import ArgumentParser, Namespace
 from boorupiece_simple.boorupiece import BooruPiece
-from booru_chars_captions_lightning.booru_chars_captions import Tokenize, PadTokens, BooruCharsCaptions
+from booru_chars_captions_lightning.booru_chars_captions import PadTokens, BooruCharsCaptions, BooruCharsCaptionsDatasetFactory, BooruCharsCaptionsDataset, TokenizeLabel, IsKnownToken
 from transformers.models.t5.configuration_t5 import T5Config
 
 def main(args: Namespace) -> None:
@@ -17,16 +17,17 @@ def main(args: Namespace) -> None:
   trainer: Trainer = Trainer.from_argparse_args(args, logger=wandb_logger)
 
   pad_tokens: PadTokens = tokenizer.pad_tokens
-  tokenize: Tokenize = lambda labels: tokenizer.encode_tokens(
-    tokenizer.tokenize_labels(
-      tokenizer.regularize_label(label) for label in labels
-      )
-    )
+  tokenize_label: TokenizeLabel = lambda label: tokenizer.tokenize_label(tokenizer.regularize_label(label))
+  is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token
+  dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset(
+    params=params,
+    tokenize_label=tokenize_label,
+    is_known_token=is_known_token,
+  )
   datamodule = BooruCharsCaptions(
     args,
     pad_tokens=pad_tokens,
-    tokenize=tokenize,
-    tokenizer=tokenizer,
+    dataset_factory=dataset_factory,
   )
   trainer.fit(model, datamodule=datamodule)
   # trainer.test(model, datamodule=datamodule)
