@@ -3,7 +3,7 @@ from pytorch_lightning import Trainer
 from .model import T5Booru
 from argparse import ArgumentParser, Namespace
 from boorupiece_simple.boorupiece import BooruPiece
-from booru_chars_captions_lightning.booru_chars_captions import PadTokens, BooruCharsCaptions, BooruCharsCaptionsDatasetFactory, BooruCharsCaptionsDataset, TokenizeLabel, IsKnownToken
+from booru_chars_captions_lightning.booru_chars_captions import PadTokens, BooruCharsCaptions, BooruCharsCaptionsDatasetFactory, BooruCharsCaptionsDataset, TokenizeLabel, IsKnownToken, EncodeToken
 from transformers.models.t5.configuration_t5 import T5Config
 
 def main(args: Namespace) -> None:
@@ -18,10 +18,12 @@ def main(args: Namespace) -> None:
 
   pad_tokens: PadTokens = tokenizer.pad_tokens
   tokenize_label: TokenizeLabel = lambda label: tokenizer.tokenize_label(tokenizer.regularize_label(label))
-  is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token
+  encode_token: EncodeToken = tokenizer.token_registry.token_to_id
+  is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token_id
   dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset(
     params=params,
     tokenize_label=tokenize_label,
+    encode_token=encode_token,
     is_known_token=is_known_token,
   )
   datamodule = BooruCharsCaptions(

@@ -60,11 +60,11 @@ order by TAG ASC
   return list(map(lambda result: result[0], cur.fetchall()))
 
 @dataclass
-class Tag:
+class TagRecord:
   TAG: str
   CAT: Optional[TagCategory]
 
-def get_tag_dtos(cur: Cursor, foreign_key: BooruFileId) -> List[Tag]:
+def get_tag_records(cur: Cursor, foreign_key: BooruFileId) -> List[TagRecord]:
   BOORU, FID = foreign_key
   cur.execute("""\
 select TAG, TAG_CAT from tags
@@ -73,7 +73,7 @@ where BOORU = :BOORU
 group by TAG
 order by TAG ASC
 """, {"BOORU": BOORU, "FID": FID})
-  return [Tag(
+  return [TagRecord(
     TAG=result[0],
     CAT=TagCategory.parse(int(result[1])),
   ) for result in cur.fetchall()]

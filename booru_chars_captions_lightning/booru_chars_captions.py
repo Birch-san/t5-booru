@@ -5,21 +5,20 @@ from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset
 from os.path import join
 from os import environ
-from typing import NamedTuple, Optional, Iterator, Iterable, Callable, List, Dict, Tuple
-from typing_extensions import Self, TypeAlias
+from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar
+from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from operator import add
 
-from boorupiece_simple.boorupiece import BooruPiece
 from .db import create_connection
-from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_dtos, BooruFileId, Tag, TagCategory
+from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_records, BooruFileId, TagRecord, TagCategory
 from argparse import ArgumentParser, Namespace
 from more_itertools import partition
 from util.enumeration_to_value import enumeration_to_value
 from contextlib import closing
 from dataclasses import dataclass
 from enum import IntEnum, auto
-from itertools import groupby
+from itertools import groupby, chain
 from random import shuffle
 
 Tokenize: TypeAlias = Callable[[List[str]], List[int]]
@@ -39,30 +38,54 @@ def _classify_tag_category(tag_category: Optional[TagCategory]) -> TagRetentionC
   # we are targeting Python 3.9 so sadly cannot use structural pattern matching
   return TagRetentionCategory.EXPENDABLE if tag_category is None else tag_category_retentions[tag_category]
 
-
-class TagWithTokens(NamedTuple):
-  tag: Tag
-  tokens: List[str]
+@dataclass
+class HasTokens:
+  tokens: List[int]
   def __len__(self) -> int:
     return len(self.tokens)
 
-class RetentionClassified(NamedTuple):
+THasTokens = TypeVar('THasTokens', bound=HasTokens)
+
+@dataclass
+class TagRecordWithTokens(HasTokens):
+  record: TagRecord
+
+@dataclass
+class TagWithTokens(HasTokens):
+  tag: str
+
+def retain_tag_only(record_dto: TagRecordWithTokens) -> TagWithTokens:
+  return TagWithTokens(
+    tokens=record_dto.tokens,
+    tag=record_dto.record.TAG,
+  )
+
+@dataclass
+class RetentionClassified:
   retention: TagRetentionCategory
-  tag: TagWithTokens
-  def __len__(self) -> int:
-    return len(self.tag)
+  tag_dto: TagWithTokens
 
-class AccumulatedTags(NamedTuple):
+@dataclass
+class AccumulatedTags:
   token_count: int
-  tags: List[TagWithTokens]
+  tag_dtos: List[TagWithTokens]
   def __len__(self) -> int:
-    return len(self.tags)
+    return len(self.tag_dtos)
 
-class AccumulatedTagsByRetention(NamedTuple):
+@dataclass
+class AccumulatedTagsByRetention:
   crucial: AccumulatedTags
   expendable: AccumulatedTags
   def __len__(self) -> int:
     return len(self.crucial) + len(self.expendable)
+
+@dataclass
+class Example:
+  unmasked: List[int]
+  masked: List[int]
+
+GetIntsFromExample: TypeAlias = Callable[[Example], List[int]]
+PadTokensKnownLength: TypeAlias = Callable[[List[int]], List[int]]
 
 @dataclass
 class Batch:
@@ -75,12 +98,14 @@ class BooruCharsCaptionsDatasetParams:
   get_cursor: Callable[[], Cursor]
 
 TokenizeLabel: TypeAlias = Callable[[str], Iterable[str]]
-IsKnownToken: TypeAlias = Callable[[str], bool]
+EncodeToken: TypeAlias = Callable[[str], int]
+IsKnownToken: TypeAlias = Callable[[int], bool]
 
 class BooruCharsCaptionsDataset(IterableDataset):
   file_ids: Iterable[BooruFileId]
   get_cursor: Callable[[], Cursor]
   tokenize_label: TokenizeLabel
+  encode_token: EncodeToken
   is_known_token: IsKnownToken
   caption_min_tokens: int
   caption_max_crucial_tokens: int
@@ -89,6 +114,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self,
     params: BooruCharsCaptionsDatasetParams,
     tokenize_label: TokenizeLabel,
+    encode_token: EncodeToken,
     is_known_token: IsKnownToken,
     caption_min_tokens = 4,
     caption_max_crucial_tokens = 4,
@@ -98,16 +124,17 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self.file_ids = params.file_ids
     self.get_cursor = params.get_cursor
     self.tokenize_label = tokenize_label
+    self.encode_token = encode_token
     self.is_known_token = is_known_token
     self.caption_min_tokens = caption_min_tokens
     self.caption_max_crucial_tokens = caption_max_crucial_tokens
     self.caption_max_tokens = caption_max_tokens
   
-  def _to_caption(self, file_id: BooruFileId) -> List[Tag]:
+  def _to_caption(self, file_id: BooruFileId) -> List[TagRecord]:
     # print(f'file_ids for {BOORU}, {FID}:')
     # cur: Cursor = self.get_cursor()
     with closing(self.get_cursor()) as cur:
-      tags: List[Tag] = get_tag_dtos(cur, file_id)
+      tags: List[TagRecord] = get_tag_records(cur, file_id)
       # print(f'len: {len(tags)}')
       # print(tags)
       return tags
@@ -118,33 +145,33 @@ class BooruCharsCaptionsDataset(IterableDataset):
   def _needs_shortening(self, token_count: int) -> bool:
     return token_count > self.caption_max_tokens
   
-  def _join_tokens(self, tags: List[Tag]) -> List[TagWithTokens]:
+  def _join_tokens(self, records: List[TagRecord]) -> List[TagRecordWithTokens]:
     return [
-      TagWithTokens(
-        tag=tag,
-        tokens=self.tokenize_label(tag.TAG)
-       ) for tag in tags
+      TagRecordWithTokens(
+        record=record,
+        tokens=[self.encode_token(token) for token in self.tokenize_label(record.TAG)]
+       ) for record in records
     ]
   
-  def _without_unknown_labels(self, tags: Iterable[TagWithTokens]) -> List[TagWithTokens]:
-    return [tag for tag in tags if all(map(self.is_known_token, tag.tokens))]
+  def _without_unknown_labels(self, token_havers: Iterable[THasTokens]) -> List[THasTokens]:
+    return [token_haver for token_haver in token_havers if all(map(self.is_known_token, token_haver.tokens))]
   
   @staticmethod
-  def _count_tokens(tags: Iterable[TagWithTokens]) -> int:
-    return reduce(add, map(len, tags), 0)
+  def _count_tokens(token_havers: Iterable[HasTokens]) -> int:
+    return reduce(add, map(len, token_havers), 0)
   
   sort_key_fn: Callable[[RetentionClassified], TagRetentionCategory] = lambda classified: classified.retention
   @classmethod
-  def _classify_tag_priorities(cls: BooruCharsCaptionsDataset, tags: List[TagWithTokens]) -> Dict[TagRetentionCategory, List[RetentionClassified]]:
+  def _classify_tag_priorities(cls: BooruCharsCaptionsDataset, tag_record_dtos: List[TagRecordWithTokens]) -> Dict[TagRetentionCategory, List[RetentionClassified]]:
     """
     We prefer not to throw away crucial tags like character names.
     Attach to each tag a designation to help us prioritize.
     """
     by_retention_list: List[RetentionClassified] = [
       RetentionClassified(
-        retention=_classify_tag_category(tag.tag.CAT),
-        tag=tag
-      ) for tag in tags
+        retention=_classify_tag_category(tag_record_dto.record.CAT),
+        tag_dto=retain_tag_only(tag_record_dto)
+      ) for tag_record_dto in tag_record_dtos
     ]
     by_retention_list.sort(key=cls.sort_key_fn)
     by_retention: Dict[TagRetentionCategory, List[RetentionClassified]] = {
@@ -153,28 +180,28 @@ class BooruCharsCaptionsDataset(IterableDataset):
     return by_retention
   
   @staticmethod
-  def _accumulate_until(tags: Iterable[TagWithTokens], limit: int) -> AccumulatedTags:
-    acc: List[TagWithTokens] = []
+  def _accumulate_until(tag_dtos: Iterable[TagWithTokens], limit: int) -> AccumulatedTags:
+    retained: List[TagWithTokens] = []
     token_count = 0
-    for tag in tags:
-      tokens_len: int = len(tag)
+    for tag_dto in tag_dtos:
+      tokens_len: int = len(tag_dto.tokens)
       if token_count + tokens_len > limit:
         continue
-      acc.append(tag)
+      retained.append(tag_dto)
       token_count += tokens_len
       if token_count == limit:
         break
-    return AccumulatedTags(token_count=token_count, tags=acc)
+    return AccumulatedTags(token_count=token_count, tag_dtos=retained)
 
-  def _shorten(self, tags: List[TagWithTokens]) -> AccumulatedTagsByRetention:
+  def _shorten(self, tag_record_dtos: List[TagRecordWithTokens]) -> AccumulatedTagsByRetention:
     """
     Some of these captions have about 100 tags.
     We wanna get it down to about 32.
     """
-    classifieds: Dict[TagRetentionCategory, List[RetentionClassified]] = self._classify_tag_priorities(tags)
+    classifieds: Dict[TagRetentionCategory, List[RetentionClassified]] = self._classify_tag_priorities(tag_record_dtos)
 
-    expendable: List[TagWithTokens] = [classified.tag for classified in classifieds.get(TagRetentionCategory.EXPENDABLE, [])]
-    crucial: List[TagWithTokens] = [classified.tag for classified in classifieds.get(TagRetentionCategory.CRUCIAL, [])]
+    expendable: List[TagWithTokens] = [classified.tag_dto for classified in classifieds.get(TagRetentionCategory.EXPENDABLE, [])]
+    crucial: List[TagWithTokens] = [classified.tag_dto for classified in classifieds.get(TagRetentionCategory.CRUCIAL, [])]
     shuffle(expendable)
     shuffle(crucial)
 
@@ -185,29 +212,47 @@ class BooruCharsCaptionsDataset(IterableDataset):
       crucial=retained_crucial,
       expendable=retained_expendable,
     )
+  
+  def _tokens_of_suitable_captions(self, candidate: List[TagRecord]) -> Optional[List[TagWithTokens]]:
+    with_tokens: List[TagRecordWithTokens] = self._join_tokens(candidate)
+    without_unknowns: List[TagRecordWithTokens] = self._without_unknown_labels(with_tokens)
+    tokens_total: int = self._count_tokens(without_unknowns)
+    if self._needs_skipping(tokens_total):
+      return None
 
-  def __iter__(self) -> Iterator[List[TagWithTokens]]:
+    if not self._needs_shortening(tokens_total):
+      return [retain_tag_only(tag_record_dto) for tag_record_dto in without_unknowns]
+    
+    shortened: AccumulatedTagsByRetention = self._shorten(without_unknowns)
+    tokens_total: int = len(shortened)
+
+    if self._needs_skipping(tokens_total):
+      return None
+
+    union: List[TagWithTokens] = [*shortened.crucial.tag_dtos, *shortened.expendable.tag_dtos]
+    union.sort(key=lambda tag_dto: tag_dto.tag)
+
+    return union
+  
+  @staticmethod
+  def _to_example(tag_dtos: List[TagWithTokens]) -> Example:
+    unmasked: List[int] = list(chain.from_iterable(map(lambda tag_dto: tag_dto.tokens, tag_dtos)))
+    return Example(
+      unmasked=unmasked,
+      # TODO: create masked by deleting 8 random tokens from unmasked.
+      #       or get a bit spicier and delete sequences of tokens, where they form a label
+      masked=unmasked,
+    )
+
+  def __iter__(self) -> Iterator[Example]:
     for file_id in self.file_ids:
-      tags: List[Tag] = self._to_caption(file_id)
-      with_tokens: List[TagWithTokens] = self._join_tokens(tags)
-      without_unknowns: List[TagWithTokens] = self._without_unknown_labels(with_tokens)
-      tokens_total: int = self._count_tokens(without_unknowns)
-      if self._needs_skipping(tokens_total):
+      tags: List[TagRecord] = self._to_caption(file_id)
+      tag_dtos: Optional[List[TagWithTokens]] = self._tokens_of_suitable_captions(tags)
+      if tag_dtos is None:
         continue
+      example: Example = self._to_example(tag_dtos)
+      yield example
 
-      if not self._needs_shortening(tokens_total):
-        yield without_unknowns
-      
-      shortened: AccumulatedTagsByRetention = self._shorten(without_unknowns)
-      tokens_total: int = len(shortened)
-
-      if self._needs_skipping(tokens_total):
-        continue
-
-      union: List[TagWithTokens] = [*shortened.crucial.tags, *shortened.expendable.tags]
-      union.sort(key=lambda tag: tag.tag.TAG)
-
-      yield union
 
 BooruCharsCaptionsDatasetFactory: TypeAlias = Callable[[BooruCharsCaptionsDatasetParams], BooruCharsCaptionsDataset]
 
@@ -314,20 +359,27 @@ class BooruCharsCaptions(LightningDataModule):
       if callable(self.close_test):
         self.close_test()
       self.test_dataset = None
-    
-  def _pad(self, tokenized: List[int], length: int) -> List[int]:
-    padded: List[int] = [*tokenized, *[self.pad_token_id] * (length - len(tokenized))]
-    return padded
   
-  def collate_fn(self, tag_dtos_batch: List[List[TagWithTokens]]) -> Batch:
-    # TODO sort the labels, decide which labels or tokens to mask, then map to token integers
-    # tokens_batch: List[List[int]] = [self._process_caption(tag_dtos) for tag_dtos in tag_dtos_batch]
-    pad_length: int = max(map(len, tag_dtos_batch))
-    padded: List[List[int]] = [self._pad(tokenized, pad_length) for tokenized in tag_dtos_batch]
-    # TODO
+  @staticmethod
+  def _pad_example_series(pad_tokens: PadTokensKnownLength, get_ints: GetIntsFromExample, examples: List[Example]) -> List[List[int]]:
+    return [pad_tokens(tokenized) for tokenized in (get_ints(example) for example in examples)]
+  
+  def collate_fn(self, examples: List[Example]) -> Batch:
+    pad_length: int = max(map(lambda example: len(example.unmasked), examples))
+    pad_tokens: PadTokensKnownLength = lambda tokenized: self.pad_tokens(tokenized, pad_length)
+    padded_maskeds: List[List[int]] = self._pad_example_series(
+      pad_tokens=pad_tokens,
+      get_ints=lambda example: example.masked,
+      examples=examples,
+      )
+    padded_unmaskeds: List[List[int]] = self._pad_example_series(
+      pad_tokens=pad_tokens,
+      get_ints=lambda example: example.unmasked,
+      examples=examples,
+      )
     batch = Batch(
-      masked=LongTensor(padded),
-      unmasked=LongTensor(padded),
+      masked=LongTensor(padded_maskeds),
+      unmasked=LongTensor(padded_unmaskeds),
     )
     return batch
 
