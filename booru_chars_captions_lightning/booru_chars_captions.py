@@ -362,6 +362,7 @@ class BooruCharsCaptions(LightningDataModule):
   
   @staticmethod
   def _pad_example_series(pad_tokens: PadTokensKnownLength, get_ints: GetIntsFromExample, examples: List[Example]) -> List[List[int]]:
+    # TODO: should we be padding with -100 token?
     return [pad_tokens(tokenized) for tokenized in (get_ints(example) for example in examples)]
   
   def collate_fn(self, examples: List[Example]) -> Batch:

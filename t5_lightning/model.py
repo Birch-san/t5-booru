@@ -5,15 +5,16 @@ from transformers.models.t5.modeling_t5 import T5ForConditionalGeneration
 from transformers.optimization import Adafactor, get_adafactor_schedule
 from torch import Tensor, LongTensor, FloatTensor
 from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
-from typing import Tuple, Optional, TypedDict, List
+from typing import Tuple, Optional#, Callable
+#from typing_extensions import TypeAlias
 from booru_chars_captions_lightning.booru_chars_captions import Batch
 
-# class Batch(TypedDict):
-#   source: LongTensor
-#   target: LongTensor
+# IsPadToken: TypeAlias = Callable[[int], bool]
 
 class T5Booru(LightningModule):
   model: T5ForConditionalGeneration
+  # is_pad_token: IsPadToken
+  pad_token_id: int
   learning_rate: int
 
   @staticmethod
@@ -25,10 +26,14 @@ class T5Booru(LightningModule):
   def __init__(
     self,
     args: Namespace,
+    # is_pad_token: IsPadToken,
+    pad_token_id: int,
     t5_config: T5Config,
     **kwargs,
   ) -> None:
     super().__init__()
+    # self.is_pad_token = is_pad_token
+    self.pad_token_id = pad_token_id
     self.model = T5ForConditionalGeneration(config=t5_config)
     self.learning_rate = args.learning_rate
   
@@ -51,7 +56,8 @@ class T5Booru(LightningModule):
     target: LongTensor = self._encodeWithoutAttention(unmasked)
 
     # replace padding token id's of the labels by -100 so it's ignored by the loss
-    target[target == self.tokenizer.pad_token_id] = -100
+    # TODO: is there a way to replace this with a IsPadToken callback?
+    target[target == self.pad_token_id] = -100
 
     # calculate loss
     output: Seq2SeqLMOutput = self.model(input_ids=source, attention_mask=source_mask, labels=target)
@@ -60,14 +66,6 @@ class T5Booru(LightningModule):
     return loss
 
   def training_step(self, batch: Batch, batch_idx: int) -> Tensor:
-    # TODO: dropout (first batch we saw was already 96 tokens long; we should consider getting this down to 32)
-    # TODO: turn List[Tokenized] into LongTensor
-    # TODO: it's probably wasteful to pad it as early as we do (i.e. in DataLoader);
-    #       we could do the padding here, when the time comes to tensorize it
-    #       (and when we know how much dropout is desired)
-    unmasked: LongTensor = batch
-    # TODO: some function over unmasked, to splice out ~8 tokens, and pad the end of the list
-    masked: LongTensor = unmasked
     loss: Tensor = self(masked=batch.masked, unmasked=batch.unmasked)
     return loss
 

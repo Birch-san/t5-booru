@@ -9,7 +9,7 @@ from transformers.models.t5.configuration_t5 import T5Config
 def main(args: Namespace) -> None:
   tokenizer = BooruPiece()
   t5_config = T5Config.from_pretrained('t5-small', vocab_size=tokenizer.token_registry.vocab_size)
-  model = T5Booru(args, t5_config=t5_config)
+  model = T5Booru(args, t5_config=t5_config, pad_token_id=tokenizer.token_registry.pad_token_id)
   wandb_logger = WandbLogger(
     project="t5-booru-lightning",
     entity="mahouko"
