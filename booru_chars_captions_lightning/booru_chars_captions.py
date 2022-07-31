@@ -5,7 +5,7 @@ from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset
 from os.path import join
 from os import environ
-from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar
+from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from operator import add
@@ -19,7 +19,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from enum import IntEnum, auto
 from itertools import groupby, chain
-from random import shuffle
+from random import shuffle, sample, random
 
 Tokenize: TypeAlias = Callable[[List[str]], List[int]]
 PadTokens: TypeAlias = Callable[[List[int], int], List[int]]
@@ -66,18 +66,18 @@ class RetentionClassified:
   tag_dto: TagWithTokens
 
 @dataclass
-class AccumulatedTags:
-  token_count: int
+class CountedTagDtos:
   tag_dtos: List[TagWithTokens]
-  def __len__(self) -> int:
-    return len(self.tag_dtos)
+  token_count: int
 
 @dataclass
-class AccumulatedTagsByRetention:
-  crucial: AccumulatedTags
-  expendable: AccumulatedTags
-  def __len__(self) -> int:
-    return len(self.crucial) + len(self.expendable)
+class ClassifiedCountedTagDtos:
+  crucial: CountedTagDtos
+  expendable: CountedTagDtos
+  def token_count(self) -> int:
+    return self.crucial.token_count + self.expendable.token_count
+
+TokenMaskStategy: TypeAlias = Callable[[List[TagWithTokens]], List[int]]
 
 @dataclass
 class Example:
@@ -110,6 +110,8 @@ class BooruCharsCaptionsDataset(IterableDataset):
   caption_min_tokens: int
   caption_max_crucial_tokens: int
   caption_max_tokens: int
+  max_tokens_masked: int
+  mask_strategy_label_chance: int
   def __init__(
     self,
     params: BooruCharsCaptionsDatasetParams,
@@ -119,6 +121,8 @@ class BooruCharsCaptionsDataset(IterableDataset):
     caption_min_tokens = 4,
     caption_max_crucial_tokens = 4,
     caption_max_tokens = 32,
+    max_tokens_masked = 8,
+    mask_strategy_label_chance = 0.5,
   ) -> None:
     super(BooruCharsCaptionsDataset).__init__()
     self.file_ids = params.file_ids
@@ -129,6 +133,8 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self.caption_min_tokens = caption_min_tokens
     self.caption_max_crucial_tokens = caption_max_crucial_tokens
     self.caption_max_tokens = caption_max_tokens
+    self.max_tokens_masked = max_tokens_masked
+    self.mask_strategy_label_chance = mask_strategy_label_chance
   
   def _to_caption(self, file_id: BooruFileId) -> List[TagRecord]:
     # print(f'file_ids for {BOORU}, {FID}:')
@@ -180,7 +186,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
     return by_retention
   
   @staticmethod
-  def _accumulate_until(tag_dtos: Iterable[TagWithTokens], limit: int) -> AccumulatedTags:
+  def _accumulate_until(tag_dtos: Iterable[TagWithTokens], limit: int) -> CountedTagDtos:
     retained: List[TagWithTokens] = []
     token_count = 0
     for tag_dto in tag_dtos:
@@ -191,9 +197,9 @@ class BooruCharsCaptionsDataset(IterableDataset):
       token_count += tokens_len
       if token_count == limit:
         break
-    return AccumulatedTags(token_count=token_count, tag_dtos=retained)
+    return CountedTagDtos(token_count=token_count, tag_dtos=tag_dtos)
 
-  def _shorten(self, tag_record_dtos: List[TagRecordWithTokens]) -> AccumulatedTagsByRetention:
+  def _shorten(self, tag_record_dtos: List[TagRecordWithTokens]) -> ClassifiedCountedTagDtos:
     """
     Some of these captions have about 100 tags.
     We wanna get it down to about 32.
@@ -205,10 +211,10 @@ class BooruCharsCaptionsDataset(IterableDataset):
     shuffle(expendable)
     shuffle(crucial)
 
-    retained_crucial: AccumulatedTags = self._accumulate_until(crucial, self.caption_max_crucial_tokens)
+    retained_crucial: CountedTagDtos = self._accumulate_until(crucial, self.caption_max_crucial_tokens)
     retain_expendable_count: int = self.caption_max_tokens - retained_crucial.token_count
-    retained_expendable: AccumulatedTags = self._accumulate_until(expendable, retain_expendable_count)
-    return AccumulatedTagsByRetention(
+    retained_expendable: CountedTagDtos = self._accumulate_until(expendable, retain_expendable_count)
+    return ClassifiedCountedTagDtos(
       crucial=retained_crucial,
       expendable=retained_expendable,
     )
@@ -221,27 +227,76 @@ class BooruCharsCaptionsDataset(IterableDataset):
       return None
 
     if not self._needs_shortening(tokens_total):
-      return [retain_tag_only(tag_record_dto) for tag_record_dto in without_unknowns]
+      tag_dtos: List[TagWithTokens] = [retain_tag_only(tag_record_dto) for tag_record_dto in without_unknowns]
+      # sorting _should_ be redundant if we trust our database query and collation
+      # but on the basis that sorting 32 items is cheap and that it'd be catastrophic
+      # if our sorts were inconsistent: let's sort anyway
+      tag_dtos.sort(key=lambda tag_dto: tag_dto.tag)
+      return tag_dtos
     
-    shortened: AccumulatedTagsByRetention = self._shorten(without_unknowns)
-    tokens_total: int = len(shortened)
+    shortened: ClassifiedCountedTagDtos = self._shorten(without_unknowns)
+    tokens_total: int = shortened.token_count()
 
     if self._needs_skipping(tokens_total):
       return None
 
-    union: List[TagWithTokens] = [*shortened.crucial.tag_dtos, *shortened.expendable.tag_dtos]
-    union.sort(key=lambda tag_dto: tag_dto.tag)
+    tag_dtos: List[TagWithTokens] = [*shortened.crucial.tag_dtos, *shortened.expendable.tag_dtos]
+    tag_dtos.sort(key=lambda tag_dto: tag_dto.tag)
 
-    return union
+    return tag_dtos
+  
+  def _mask_tokens(self, tag_dtos: List[TagWithTokens]) -> List[int]:
+    """
+    Given [['black', 'dress'], ['white', 'hat']]
+    (i.e. where a multiple tokens constitute a single label)
+    Masks tokens rather than entire labels, deleting like so then flattening
+    [['black', *], [*, 'hat']]
+    ['black', 'hat']
+    If one wanted to be a bit more focused on the "label-completion" objective:
+    This could be rewritten to avoid masking single-token labels, and to never mask a label's every token.
+    """
+    count: int = self._count_tokens(tag_dtos)
+    to_mask_count: int = max(1, min(self.max_tokens_masked, count))
+    remove_indices: Set[int] = set(sample(range(0, count), k=to_mask_count))
+    retained: List[int] = []
+    ix = 0
+    for tag_dto in tag_dtos:
+      for token in tag_dto.tokens:
+        if ix not in remove_indices:
+          retained.append(token)
+        ix += 1
+    return retained
   
   @staticmethod
-  def _to_example(tag_dtos: List[TagWithTokens]) -> Example:
-    unmasked: List[int] = list(chain.from_iterable(map(lambda tag_dto: tag_dto.tokens, tag_dtos)))
+  def _tags_to_ints(tag_dtos: Iterable[TagWithTokens]) -> List[int]:
+    return list(chain.from_iterable(map(lambda tag_dto: tag_dto.tokens, tag_dtos)))
+  
+  def _mask_labels(self, tag_dtos: List[TagWithTokens]) -> List[int]:
+    """
+    Given [['black', 'dress'], ['white', 'hat']]
+    Masks entire labels, deleting like so then flattening
+    [['white', 'hat'], *]
+    ['white', 'hat']
+    """
+    # TODO: this removes more than 8 tokens.
+    remove_label_indices: Set[int] = set(sample(range(0, len(tag_dtos)), k=self.max_tokens_masked))
+    retained: List[int] = self._tags_to_ints(tag_dto for ix, tag_dto in enumerate(tag_dtos) if ix not in remove_label_indices)
+    return retained
+
+  def _mask(self, tag_dtos: List[TagWithTokens]) -> List[TagWithTokens]:
+    # use two strategies randomly:
+    # _mask_tokens (label-completion)
+    # _mask_labels (caption-completion)
+    strategy: TokenMaskStategy = self._mask_labels if random() < self.mask_strategy_label_chance else self._mask_tokens
+    masked: List[int] = strategy(tag_dtos)
+    return masked
+
+  def _to_example(self, unmasked_dtos: List[TagWithTokens]) -> Example:
+    masked: List[int] = self._mask(unmasked_dtos)
+    unmasked: List[int] = self._tags_to_ints(unmasked_dtos)
     return Example(
       unmasked=unmasked,
-      # TODO: create masked by deleting 8 random tokens from unmasked.
-      #       or get a bit spicier and delete sequences of tokens, where they form a label
-      masked=unmasked,
+      masked=masked,
     )
 
   def __iter__(self) -> Iterator[Example]:
