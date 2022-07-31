@@ -197,7 +197,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
       token_count += tokens_len
       if token_count == limit:
         break
-    return CountedTagDtos(token_count=token_count, tag_dtos=tag_dtos)
+    return CountedTagDtos(token_count=token_count, tag_dtos=retained)
 
   def _shorten(self, tag_record_dtos: List[TagRecordWithTokens]) -> ClassifiedCountedTagDtos:
     """
@@ -219,6 +219,10 @@ class BooruCharsCaptionsDataset(IterableDataset):
       expendable=retained_expendable,
     )
   
+  @staticmethod
+  def _sort_tag_dtos(tag_dtos: List[TagWithTokens]) -> None:
+    tag_dtos.sort(key=lambda tag_dto: tag_dto.tag)
+  
   def _tokens_of_suitable_captions(self, candidate: List[TagRecord]) -> Optional[List[TagWithTokens]]:
     with_tokens: List[TagRecordWithTokens] = self._join_tokens(candidate)
     without_unknowns: List[TagRecordWithTokens] = self._without_unknown_labels(with_tokens)
@@ -231,7 +235,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
       # sorting _should_ be redundant if we trust our database query and collation
       # but on the basis that sorting 32 items is cheap and that it'd be catastrophic
       # if our sorts were inconsistent: let's sort anyway
-      tag_dtos.sort(key=lambda tag_dto: tag_dto.tag)
+      self._sort_tag_dtos(tag_dtos)
       return tag_dtos
     
     shortened: ClassifiedCountedTagDtos = self._shorten(without_unknowns)
@@ -241,7 +245,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
       return None
 
     tag_dtos: List[TagWithTokens] = [*shortened.crucial.tag_dtos, *shortened.expendable.tag_dtos]
-    tag_dtos.sort(key=lambda tag_dto: tag_dto.tag)
+    self._sort_tag_dtos(tag_dtos)
 
     return tag_dtos
   
@@ -268,7 +272,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
     return retained
   
   @staticmethod
-  def _tags_to_ints(tag_dtos: Iterable[TagWithTokens]) -> List[int]:
+  def _tags_to_token_ids(tag_dtos: Iterable[TagWithTokens]) -> List[int]:
     return list(chain.from_iterable(map(lambda tag_dto: tag_dto.tokens, tag_dtos)))
   
   def _mask_labels(self, tag_dtos: List[TagWithTokens]) -> List[int]:
@@ -278,10 +282,13 @@ class BooruCharsCaptionsDataset(IterableDataset):
     [['white', 'hat'], *]
     ['white', 'hat']
     """
-    # TODO: this removes more than 8 tokens.
-    remove_label_indices: Set[int] = set(sample(range(0, len(tag_dtos)), k=self.max_tokens_masked))
-    retained: List[int] = self._tags_to_ints(tag_dto for ix, tag_dto in enumerate(tag_dtos) if ix not in remove_label_indices)
-    return retained
+    tag_dtos_shuffled: List[TagWithTokens] = sample(tag_dtos, k=len(tag_dtos))
+    count: int = self._count_tokens(tag_dtos_shuffled)
+    retain_count = max(1, count - self.max_tokens_masked)
+    retained: List[TagWithTokens] = self._accumulate_until(tag_dtos_shuffled, retain_count).tag_dtos
+    self._sort_tag_dtos(retained)
+    token_ids: List[int] = self._tags_to_token_ids(retained)
+    return token_ids
 
   def _mask(self, tag_dtos: List[TagWithTokens]) -> List[TagWithTokens]:
     # use two strategies randomly:
@@ -293,7 +300,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
 
   def _to_example(self, unmasked_dtos: List[TagWithTokens]) -> Example:
     masked: List[int] = self._mask(unmasked_dtos)
-    unmasked: List[int] = self._tags_to_ints(unmasked_dtos)
+    unmasked: List[int] = self._tags_to_token_ids(unmasked_dtos)
     return Example(
       unmasked=unmasked,
       masked=masked,
