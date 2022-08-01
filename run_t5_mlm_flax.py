@@ -567,13 +567,14 @@ def main():
         "streaming": data_args.streaming,
         "cache_dir": model_args.cache_dir,
         "use_auth_token": True if model_args.use_auth_token else None,
+        "ignore_verifications": True,
     }
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         datasets = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
-            precomputed_validation_split_percentage=data_args.validation_split_percentage,
+            # precomputed_validation_split_percentage=data_args.validation_split_percentage,
             **load_datasets_kwargs
         )
 
@@ -668,6 +669,7 @@ def main():
         column_names: List[str] = datasets["train"].column_names
     else:
         column_names: List[str] = datasets["validation"].column_names
+    # column_names: List[str] = ['text']
     text_column_name: str = "text" if "text" in column_names else column_names[0]
 
     max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
@@ -751,7 +753,7 @@ def main():
             config=config,
             seed=training_args.seed,
             dtype=getattr(jnp, model_args.dtype),
-            use_auth_token=True if model_args.use_auth_token else None,
+            # use_auth_token=True if model_args.use_auth_token else None,
         )
     else:
         config.vocab_size = len(tokenizer)
@@ -759,7 +761,7 @@ def main():
             config,
             seed=training_args.seed,
             dtype=getattr(jnp, model_args.dtype),
-            use_auth_token=True if model_args.use_auth_token else None,
+            # use_auth_token=True if model_args.use_auth_token else None,
         )
     
 
