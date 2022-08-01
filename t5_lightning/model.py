@@ -3,19 +3,22 @@ from pytorch_lightning import LightningModule
 from transformers.models.t5.configuration_t5 import T5Config
 from transformers.models.t5.modeling_t5 import T5ForConditionalGeneration
 from transformers.optimization import Adafactor, get_adafactor_schedule
-from torch import Tensor, LongTensor, FloatTensor
-from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
-from typing import Tuple, Optional#, Callable
-#from typing_extensions import TypeAlias
+from torch import Tensor, LongTensor
+from transformers.modeling_outputs import Seq2SeqLMOutput
+from typing import Callable
+from typing_extensions import TypeAlias
 from booru_chars_captions_lightning.booru_chars_captions import Batch
 
-# IsPadToken: TypeAlias = Callable[[int], bool]
+TokenPredicate: TypeAlias = Callable[[int], bool]
+IsPadToken: TypeAlias = TokenPredicate
+IsNotPadToken: TypeAlias = TokenPredicate
 
 class T5Booru(LightningModule):
   model: T5ForConditionalGeneration
-  # is_pad_token: IsPadToken
-  pad_token_id: int
+  is_pad_token: IsPadToken
+  is_not_pad_token: IsNotPadToken
   learning_rate: int
+  captions_seen: int
 
   @staticmethod
   def add_model_specific_args(parent_parser: ArgumentParser) -> ArgumentParser:
@@ -26,23 +29,23 @@ class T5Booru(LightningModule):
   def __init__(
     self,
     args: Namespace,
-    # is_pad_token: IsPadToken,
-    pad_token_id: int,
+    is_pad_token: IsPadToken,
     t5_config: T5Config,
     **kwargs,
   ) -> None:
     super().__init__()
-    # self.is_pad_token = is_pad_token
-    self.pad_token_id = pad_token_id
+    self.is_pad_token = is_pad_token
+    self.is_not_pad_token = lambda token_id: ~is_pad_token(token_id)
     self.model = T5ForConditionalGeneration(config=t5_config)
     self.learning_rate = args.learning_rate
+    self.captions_seen = 0
+    self.save_hyperparameters()
 
   def forward(self, unmasked: LongTensor, masked: LongTensor) -> Tensor:
-    attention_mask: LongTensor = (masked != self.pad_token_id).long()
+    attention_mask: LongTensor = self.is_not_pad_token(masked).long()
 
     # replace padding token id's of the labels by -100 so it's ignored by the loss
-    # TODO: is there a way to replace this with a IsPadToken callback?
-    masked[masked == self.pad_token_id] = -100
+    masked[self.is_pad_token(masked)] = -100
 
     # calculate loss
     output: Seq2SeqLMOutput = self.model.forward(
@@ -56,6 +59,10 @@ class T5Booru(LightningModule):
 
   def training_step(self, batch: Batch, batch_idx: int) -> Tensor:
     loss: Tensor = self(unmasked=batch.unmasked, masked=batch.masked)
+    batch_size = batch.masked.shape[0]
+    self.captions_seen += batch_size
+    self.log('train/loss', loss)
+    self.log('captions_seen', self.captions_seen)
     return loss
 
   def configure_optimizers(self):

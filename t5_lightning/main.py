@@ -1,6 +1,6 @@
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning import Trainer
-from .model import T5Booru
+from .model import IsPadToken, T5Booru
 from argparse import ArgumentParser, Namespace
 from boorupiece_simple.boorupiece import BooruPiece
 from booru_chars_captions_lightning.booru_chars_captions import PadTokens, BooruCharsCaptions, BooruCharsCaptionsDatasetFactory, BooruCharsCaptionsDataset, TokenizeLabel, IsKnownToken, EncodeToken
@@ -9,7 +9,12 @@ from transformers.models.t5.configuration_t5 import T5Config
 def main(args: Namespace) -> None:
   tokenizer = BooruPiece()
   t5_config = T5Config.from_pretrained('t5-small', vocab_size=tokenizer.token_registry.vocab_size)
-  model = T5Booru(args, t5_config=t5_config, pad_token_id=tokenizer.token_registry.pad_token_id)
+  is_pad_token: IsPadToken = lambda token_id: token_id == tokenizer.token_registry.pad_token_id
+  model = T5Booru(
+    args,
+    t5_config=t5_config,
+    is_pad_token=is_pad_token,
+    )
   wandb_logger = WandbLogger(
     project="t5-booru-lightning",
     entity="mahouko"
