@@ -35,22 +35,20 @@ class TokenRegistry:
 
 class TokenRegistryWithWellKnownTokens(TokenRegistry):
   vocab: IntEnum
+  pad_token: str
   eos_token: str
   unk_token: str
-  pad_token: str
+  pad_token_id: int
   eos_token_id: int
   unk_token_id: int
-  pad_token_id: int
   def __init__(
     self,
     tokens: Iterable[str],
+    pad_token="<pad>",
     eos_token="</s>",
     unk_token="<unk>",
-    pad_token="<pad>",
   ) -> None:
     super().__init__(
-      # pad token delibately placed at position 0 — as the token you'll encounter most (in a batch):
-      # assigning a zero ID enables it to be used as the basis for describing a batch as a sparse tensor
       tokens=chain([pad_token, eos_token, unk_token], tokens)
     )
     self.eos_token = eos_token

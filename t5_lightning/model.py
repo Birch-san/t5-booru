@@ -36,37 +36,26 @@ class T5Booru(LightningModule):
     self.pad_token_id = pad_token_id
     self.model = T5ForConditionalGeneration(config=t5_config)
     self.learning_rate = args.learning_rate
-  
-  def _encode(self, input_ids: LongTensor, output_attentions: bool) -> Tuple[LongTensor, Optional[FloatTensor]]:
-    encoded: BaseModelOutput = self.model.encoder(input_ids=input_ids, output_attentions=output_attentions)
-    if (output_attentions):
-      attentions: Tuple[FloatTensor, ...] = encoded.attentions
-      return encoded.last_hidden_state, attentions
-    return encoded.last_hidden_state, None
-  
-  def _encodeWithAttention(self, input_ids: LongTensor) -> Tuple[LongTensor, FloatTensor]:
-    return self._encode(input_ids=input_ids, output_attentions=True)
-  
-  def _encodeWithoutAttention(self, input_ids: LongTensor) -> LongTensor:
-    last_hidden_state, _ = self._encode(input_ids=input_ids, output_attentions=False)
-    return last_hidden_state
 
-  def forward(self, masked: LongTensor, unmasked: LongTensor) -> Tensor:
-    source, source_mask = self._encodeWithAttention(masked)
-    target: LongTensor = self._encodeWithoutAttention(unmasked)
+  def forward(self, unmasked: LongTensor, masked: LongTensor) -> Tensor:
+    attention_mask: LongTensor = (masked != self.pad_token_id).long()
 
     # replace padding token id's of the labels by -100 so it's ignored by the loss
     # TODO: is there a way to replace this with a IsPadToken callback?
-    target[target == self.pad_token_id] = -100
+    masked[masked == self.pad_token_id] = -100
 
     # calculate loss
-    output: Seq2SeqLMOutput = self.model(input_ids=source, attention_mask=source_mask, labels=target)
+    output: Seq2SeqLMOutput = self.model.forward(
+      input_ids=unmasked,
+      attention_mask=attention_mask,
+      labels=masked
+    )
     loss: Tensor = output.loss
 
     return loss
 
   def training_step(self, batch: Batch, batch_idx: int) -> Tensor:
-    loss: Tensor = self(masked=batch.masked, unmasked=batch.unmasked)
+    loss: Tensor = self(unmasked=batch.unmasked, masked=batch.masked)
     return loss
 
   def configure_optimizers(self):
