@@ -8,7 +8,11 @@ from transformers.models.t5.configuration_t5 import T5Config
 
 def main(args: Namespace) -> None:
   tokenizer = BooruPiece()
-  t5_config = T5Config.from_pretrained('t5-small', vocab_size=tokenizer.token_registry.vocab_size)
+  t5_config = T5Config.from_pretrained(
+    't5-small',
+    vocab_size=tokenizer.token_registry.vocab_size,
+    torch_dtype='bfloat16',
+  )
   is_pad_token: IsPadToken = lambda token_id: token_id == tokenizer.token_registry.pad_token_id
   model = T5Booru(
     args,

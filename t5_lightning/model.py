@@ -1,4 +1,5 @@
 from argparse import ArgumentParser, Namespace
+from ast import arg
 from pytorch_lightning import LightningModule
 from transformers.models.t5.configuration_t5 import T5Config
 from transformers.models.t5.modeling_t5 import T5ForConditionalGeneration
@@ -49,9 +50,9 @@ class T5Booru(LightningModule):
 
     # calculate loss
     output: Seq2SeqLMOutput = self.model.forward(
-      input_ids=unmasked,
-      attention_mask=attention_mask,
-      labels=masked
+      input_ids=unmasked.to('mps'),
+      attention_mask=attention_mask.to('mps'),
+      labels=masked.to('mps')
     )
     loss: Tensor = output.loss
 

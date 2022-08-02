@@ -143,7 +143,12 @@
       "console": "integratedTerminal",
       "justMyCode": false,
       "args": [
-      ]
-    },
+        "--accelerator",
+        "mps"
+      ],
+      "env": {
+        "PYTORCH_ENABLE_MPS_FALLBACK": "1"
+      }
+    }
   ]
 }
