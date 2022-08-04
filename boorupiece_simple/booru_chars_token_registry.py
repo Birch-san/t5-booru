@@ -1,7 +1,7 @@
 from os.path import exists, join
 from itertools import chain
 from typing import Iterable, List
-from .token_registry import TokenRegistryWithWellKnownTokens
+from .token_registry import PadTokenMixin, UnkTokenMixin, TokenRegistry
 from io import TextIOWrapper
 import gzip, shutil
 from pathlib import Path
@@ -14,15 +14,13 @@ compressed_vocab_files = {
   name: f'{path}.gz' for name, path in vocab_files.items()
 }
 
-class BooruCharsTokenRegistry(TokenRegistryWithWellKnownTokens):
+class BooruCharsTokenRegistry(UnkTokenMixin, PadTokenMixin, TokenRegistry):
   data_dir: Path
   def __init__(
     self,
-    eos_token="</s>",
-    unk_token="<unk>",
-    pad_token="<pad>",
     data_dir: Path = Path(__file__).resolve().parent,
     extra_tokens: Iterable[str] = [],
+    **kwargs
   ) -> None:
     self.data_dir = data_dir
     for name, path in vocab_files.items():
@@ -37,10 +35,8 @@ class BooruCharsTokenRegistry(TokenRegistryWithWellKnownTokens):
     tokens = chain(label_tokens, general_tokens, extra_tokens)
 
     super().__init__(
-      eos_token=eos_token,
-      unk_token=unk_token,
-      pad_token=pad_token,
-      tokens=tokens
+      tokens=tokens,
+      **kwargs
     )
   
   def qualify_asset_path(self, filename: str)-> str:

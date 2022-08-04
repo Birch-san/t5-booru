@@ -2,14 +2,13 @@ from __future__ import annotations
 from typing import List, Iterable
 from itertools import chain
 import re
-from .token_registry import TokenRegistryWithWellKnownTokens
 from .booru_chars_token_registry import BooruCharsTokenRegistry
 
 class BooruPiece():
-  token_registry: TokenRegistryWithWellKnownTokens
+  token_registry: BooruCharsTokenRegistry
   def __init__(
     self,
-    token_registry: TokenRegistryWithWellKnownTokens = BooruCharsTokenRegistry()
+    token_registry: BooruCharsTokenRegistry = BooruCharsTokenRegistry()
   ) -> None:
     self.token_registry = token_registry
   
