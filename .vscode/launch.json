@@ -144,7 +144,11 @@
       "justMyCode": false,
       "args": [
         "--accelerator",
-        "mps"
+        "mps",
+        "--batch_size",
+        "128",
+        "--caption_max_tokens",
+        "128"
       ],
       "env": {
         "PYTORCH_ENABLE_MPS_FALLBACK": "1"

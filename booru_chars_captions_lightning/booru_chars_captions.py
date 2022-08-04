@@ -2,10 +2,10 @@ from __future__ import annotations
 from functools import reduce
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader, IterableDataset, Dataset
 from os.path import join
 from os import environ
-from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set
+from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set, Union
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from operator import add
@@ -13,6 +13,7 @@ from operator import add
 from .db import create_connection
 from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_records, BooruFileId, TagRecord, TagCategory
 from argparse import ArgumentParser, Namespace
+from pytorch_lightning.utilities.argparse import from_argparse_args
 from more_itertools import partition
 from util.enumeration_to_value import enumeration_to_value
 from contextlib import closing
@@ -112,15 +113,26 @@ class BooruCharsCaptionsDataset(IterableDataset):
   caption_max_tokens: int
   max_tokens_masked: int
   mask_strategy_label_chance: int
+
+  @staticmethod
+  def add_argparse_args(parent_parser: ArgumentParser) -> ArgumentParser:
+    parser = parent_parser.add_argument_group("BooruCharsCaptionsDataset")
+    parser.add_argument('--caption_max_tokens', type=int, default=32)
+    return parent_parser
+  
+  @classmethod
+  def from_argparse_args(cls, args: Union[Namespace, ArgumentParser], **kwargs):
+    return from_argparse_args(cls, args, **kwargs)
+
   def __init__(
     self,
     params: BooruCharsCaptionsDatasetParams,
     tokenize_label: TokenizeLabel,
     encode_token: EncodeToken,
     is_known_token: IsKnownToken,
+    caption_max_tokens: int,
     caption_min_tokens = 4,
     caption_max_crucial_tokens = 4,
-    caption_max_tokens = 32,
     max_tokens_masked = 8,
     mask_strategy_label_chance = 0.5,
   ) -> None:
@@ -334,6 +346,7 @@ class BooruCharsCaptions(LightningDataModule):
   @staticmethod
   def add_argparse_args(parent_parser: ArgumentParser) -> ArgumentParser:
     parser = parent_parser.add_argument_group("BooruCharsCaptions")
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument('--validation_split_percentage', type=int, default=5)
     parser.add_argument('--test_quantity', type=int, default=32)
     parser.add_argument('--sqlite_db_path', type=str, default=join(environ['HOME'], 'machine-learning/booru-chars/booru-chars.db'))
@@ -341,17 +354,20 @@ class BooruCharsCaptions(LightningDataModule):
 
   def __init__(
     self,
-    args: Namespace,
+    batch_size: int,
+    validation_split_percentage: int,
+    test_quantity: int,
+    sqlite_db_path: str,
     pad_tokens: PadTokens,
     dataset_factory: BooruCharsCaptionsDatasetFactory,
   ) -> None:
     super().__init__()
     self.pad_tokens = pad_tokens
     self.dataset_factory = dataset_factory
-    self.batch_size = args.batch_size
-    self.validation_split_percentage = args.validation_split_percentage
-    self.test_quantity = args.test_quantity
-    self.sqlite_db_path = args.sqlite_db_path
+    self.batch_size = batch_size
+    self.validation_split_percentage = validation_split_percentage
+    self.test_quantity = test_quantity
+    self.sqlite_db_path = sqlite_db_path
   
   @staticmethod
   def _close_handles(cur: Cursor, conn: Connection) -> None:
@@ -445,18 +461,18 @@ class BooruCharsCaptions(LightningDataModule):
       unmasked=LongTensor(padded_unmaskeds),
     )
     return batch
+  
+  def _generic_dataloader(self, dataset: Dataset) -> DataLoader:
+    return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self.collate_fn)
 
   def train_dataloader(self) -> DataLoader:
     assert self.train_dataset is not None
-    return DataLoader(self.train_dataset, batch_size=self.batch_size, collate_fn=self.collate_fn)
+    return self._generic_dataloader(self.train_dataset)
 
   def val_dataloader(self) -> DataLoader:
     assert self.validation_dataset is not None
-    return DataLoader(self.validation_dataset, batch_size=self.batch_size)
+    return self._generic_dataloader(self.validation_dataset)
 
   def test_dataloader(self) -> DataLoader:
     assert self.test_dataset is not None
-    return DataLoader(self.test_dataset, batch_size=self.batch_size)
-
-  # def predict_dataloader(self) -> DataLoader:
-  #   return DataLoader(self.mnist_predict, batch_size=self.batch_size)
+    return self._generic_dataloader(self.test_dataset)

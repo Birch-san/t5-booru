@@ -14,7 +14,7 @@ def main(args: Namespace) -> None:
     torch_dtype='bfloat16',
   )
   is_pad_token: IsPadToken = lambda token_id: token_id == tokenizer.token_registry.pad_token_id
-  model = T5Booru(
+  model = T5Booru.from_argparse_args(
     args,
     t5_config=t5_config,
     is_pad_token=is_pad_token,
@@ -29,13 +29,14 @@ def main(args: Namespace) -> None:
   tokenize_label: TokenizeLabel = lambda label: tokenizer.tokenize_label(tokenizer.regularize_label(label))
   encode_token: EncodeToken = tokenizer.token_registry.token_to_id
   is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token_id
-  dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset(
+  dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset.from_argparse_args(
+    args,
     params=params,
     tokenize_label=tokenize_label,
     encode_token=encode_token,
     is_known_token=is_known_token,
   )
-  datamodule = BooruCharsCaptions(
+  datamodule = BooruCharsCaptions.from_argparse_args(
     args,
     pad_tokens=pad_tokens,
     dataset_factory=dataset_factory,
@@ -46,10 +47,9 @@ def main(args: Namespace) -> None:
 if __name__ == "__main__":
   # https://pytorch-lightning.readthedocs.io/en/stable/common/hyperparameters.html?highlight=add_model_specific_args#argparser-best-practices
   parser = ArgumentParser()
-  parser.add_argument("--batch_size", type=int, default=32)
-  # parser.add_argument("--accelerator", default=None)
   parser = Trainer.add_argparse_args(parser)
   parser = BooruCharsCaptions.add_argparse_args(parser)
+  parser = BooruCharsCaptionsDataset.add_argparse_args(parser)
   parser = T5Booru.add_model_specific_args(parser)
   args = parser.parse_args()
 

@@ -1,11 +1,12 @@
 from argparse import ArgumentParser, Namespace
 from pytorch_lightning import LightningModule
+from pytorch_lightning.utilities.argparse import from_argparse_args
 from transformers.models.t5.configuration_t5 import T5Config
 from transformers.models.t5.modeling_t5 import T5ForConditionalGeneration
 from transformers.optimization import Adafactor, get_adafactor_schedule
 from torch import Tensor, LongTensor
 from transformers.modeling_outputs import Seq2SeqLMOutput
-from typing import Callable
+from typing import Callable, Union
 from typing_extensions import TypeAlias
 from booru_chars_captions_lightning.booru_chars_captions import Batch
 
@@ -25,21 +26,24 @@ class T5Booru(LightningModule):
     parser = parent_parser.add_argument_group("T5Booru")
     parser.add_argument('--learning_rate', type=float, default=0.0, help='The initial learning rate for Adafactor')
     return parent_parser
+  
+  @classmethod
+  def from_argparse_args(cls, args: Union[Namespace, ArgumentParser], **kwargs):
+    return from_argparse_args(cls, args, **kwargs)
 
   def __init__(
     self,
-    args: Namespace,
+    learning_rate: int,
     is_pad_token: IsPadToken,
     t5_config: T5Config,
-    **kwargs,
   ) -> None:
     super().__init__()
     self.is_pad_token = is_pad_token
     self.is_not_pad_token = lambda token_id: ~is_pad_token(token_id)
     self.model = T5ForConditionalGeneration(config=t5_config)
-    self.learning_rate = args.learning_rate
+    self.learning_rate = learning_rate
     self.captions_seen = 0
-    self.save_hyperparameters()
+    # self.save_hyperparameters()
 
   def forward(self, unmasked: LongTensor, masked: LongTensor) -> Tensor:
     attention_mask: LongTensor = self.is_not_pad_token(masked).long()
@@ -58,7 +62,7 @@ class T5Booru(LightningModule):
     return loss
 
   def training_step(self, batch: Batch, batch_idx: int) -> Tensor:
-    loss: Tensor = self(unmasked=batch.unmasked, masked=batch.masked)
+    loss: Tensor = self.forward(unmasked=batch.unmasked, masked=batch.masked)
     batch_size = batch.masked.shape[0]
     self.captions_seen += batch_size
     self.log('train/loss', loss)
