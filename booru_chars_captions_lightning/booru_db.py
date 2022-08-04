@@ -1,6 +1,6 @@
 from __future__ import annotations
 from sqlite3 import Cursor
-from typing import Iterator, NamedTuple, List, Optional
+from typing import Iterator, NamedTuple, List, Optional, Iterable
 from enum import IntEnum
 from dataclasses import dataclass
 
@@ -77,3 +77,49 @@ order by TAG ASC
     TAG=result[0],
     CAT=TagCategory.parse(int(result[1])),
   ) for result in cur.fetchall()]
+
+def get_validation_fids(
+  cur: Cursor,
+  limit=128,
+  blessed_franchises: Iterable[str] = ('hololive', 'touhou')
+) -> Cursor:
+  return cur.execute("""\
+select f.BOORU, f.FID
+from files f
+where exists(
+  select null
+   from tags t
+  where f.BOORU = t.BOORU
+    and f.FID = t.FID
+    and t.TAG IN :BLESSED_FRANCHISES
+)
+limit :LIMIT
+""", {
+    "LIMIT": limit,
+    "BLESSED_FRANCHISES": blessed_franchises
+  })
+
+def get_test_fids(
+  cur: Cursor,
+  validation_limit=128,
+  blessed_franchises: Iterable[str] = ('hololive', 'touhou')
+) -> Cursor:
+  return cur.execute("""\
+select f.BOORU, f.FID
+from files f
+where (f.BOORU, f.FID) not in (
+  select f2.BOORU, f2.FID
+  from files f2
+  where exists(
+    select null
+     from tags t
+    where f2.BOORU = t.BOORU
+      and f2.FID = t.FID
+      and t.TAG IN :BLESSED_FRANCHISES
+  )
+  limit :VALIDATION_LIMIT
+)
+""", {
+    "VALIDATION_LIMIT": validation_limit,
+    "BLESSED_FRANCHISES": blessed_franchises
+  })
