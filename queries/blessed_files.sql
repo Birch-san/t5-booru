@@ -1,10 +1,10 @@
-select f.BOORU, f.FID
+select f.booru, f.fid
 from files f
 join tags t
- on t.BOORU = f.BOORU
-and t.FID = f.FID
-where t.TAG_CAT != 0
-and t.TAG IN (
+ on t.booru = f.booru
+and t.fid = f.fid
+where t.tag_cat != 0
+and t.tag in (
   'hololive',
   'touhou',
   'neon_genesis_evangelion',
@@ -79,4 +79,4 @@ and t.TAG IN (
   'ssss.gridman',
   'fire_emblem:_three_houses'
 )
-group by f.BOORU, f.FID
+group by f.booru, f.fid

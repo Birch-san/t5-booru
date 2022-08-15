@@ -23,20 +23,6 @@ Download a recent booru-chars distribution, e.g. https://nyaa.si/view/1486179.
 You can download with a bittorrent client such as [qBittorrent](https://www.qbittorrent.org/download.php).  
 Download from booru-chars distributions the `*_tags.tsv` and `*_files.tsv`.
 
-### Sanitize raw inputs
-
-`V2022B_tags.tsv` make contain lines that have double-quotes, like this:
-
-```
-www.zerochan.net	3633380	"I'm_One_Dapping_Fella"_S...	0	3	COPYRIGHT
-```
-
-Remove them like so:
-
-```bash
-find . -type file -name '*_*s.tsv' -exec gawk -i inplace '! /"/' {} \;
-```
-
 ### Create & populate database
 
 Construct a sqlite database.
@@ -45,49 +31,51 @@ Construct a sqlite database.
 sqlite3 -batch booru-chars.db <<'SQL'
 .mode tabs
 create table files (
-  BOORU text not null,
-  FID integer not null,
-  FILE_NAME text not null,
-  TORR_MD5 text,
-  ORIG_EXT text,
-  ORIG_MD5 text,
-  FILE_SIZE text,
-  IMG_SIZE_TORR text,
-  JQ text,
-  TORR_PATH text,
-  TAGS_COPYR text,
-  TAGS_CHAR text,
-  TAGS_ARTIST text,
-  primary key(BOORU, FID)
+  booru text not null,
+  fid integer not null,
+  shard text not null,
+  file_name text not null,
+  torr_md5 text,
+  orig_ext text,
+  orig_md5 text,
+  file_size integer,
+  img_width_torr integer,
+  img_height_torr integer,
+  jq text,
+  torr_path text,
+  tags_copyr text,
+  tags_char text,
+  tags_artist text,
+  primary key(booru, fid)
 );
-create index idx_FILE_NAME on files (FILE_NAME);
+create index idx_file_name on files (file_name);
 create table tags (
-  BOORU text,
-  FID integer,
-  TAG text,
-  TAG_ID integer,
-  TAG_CAT integer,
-  DANB_FR text,
-  primary key (BOORU, FID, TAG_ID),
-  foreign key (BOORU, FID)
-    REFERENCES files (BOORU, FID)
-    ON DELETE CASCADE
-    ON UPDATE NO ACTION
+  booru text,
+  fid integer,
+  tag text,
+  tag_id integer,
+  tag_cat integer,
+  danb_fr text,
+  foreign key (booru, fid)
+    references files (booru, fid)
+    on delete cascade
+    on update no action
 );
-create index idx_TAG on tags (TAG);
-create index idx_TAG_CAT on tags (TAG_CAT);
-create index idx_DANB_FR on tags (DANB_FR);
-.import --skip 1 "Safebooru 2021a/V2021A_files.tsv" files
-.import --skip 1 "Safebooru 2021a/V2021A_tags.tsv" tags
-.import --skip 1 "Safebooru 2021b/V2021B_files.tsv" files
-.import --skip 1 "Safebooru 2021b/V2021B_tags.tsv" tags
-.import --skip 1 "Safebooru 2021c/V2021C_files.tsv" files
-.import --skip 1 "Safebooru 2021c/V2021C_tags.tsv" tags
-.import --skip 1 "Safebooru 2021d/V2021D_files.tsv" files
-.import --skip 1 "Safebooru 2021d/V2021D_tags.tsv" tags
-.import --skip 1 "Safebooru 2022a/V2022A_files.tsv" files
-.import --skip 1 "Safebooru 2022a/V2022A_tags.tsv" tags
-.import --skip 1 "Safebooru 2022b/V2022B_files.tsv" files
-.import --skip 1 "Safebooru 2022b/V2022B_tags.tsv" tags
+create index idx_tag on tags (tag);
+create index idx_tag_cat on tags (tag_cat);
+create index idx_booru_fid on tags (booru, fid);
+.read ./queries/walfie.sql
+.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021a/V2021A_files.tsv"' files
+.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021a/V2021A_tags.tsv"' tags
+.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021b/V2021B_files.tsv"' files
+.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021b/V2021B_tags.tsv"' tags
+.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021c/V2021C_files.tsv"' files
+.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021c/V2021C_tags.tsv"' tags
+.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021d/V2021D_files.tsv"' files
+.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021d/V2021D_tags.tsv"' tags
+.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2022a/V2022A_files.tsv"' files
+.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2022a/V2022A_tags.tsv"' tags
+.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2022b/V2022B_files.tsv"' files
+.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2022b/V2022B_tags.tsv"' tags
 SQL
 ```
