@@ -1,15 +1,9 @@
-#!/usr/bin/env zsh
-awk -F"\t" -v OFS='\t' '$2 >= 79 {
-  counts[tolower($1)] = $2
-}
-END {
-  for(i in counts) {
-    count = counts[i];
-    print count, i;
-  }
-}' "$HOME/machine-learning/tokenization/all-non-general-tags-prevalence.tsv" | \
-sort -rn | \
-awk -F"\t" '$0=$2'
+#!/usr/bin/env bash
 
-## TODO eliminate dupes between general/propernoun lists. e.g. hololive
-# could just do that at consumption-time in Python
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# we filter to at least 83 occurrences, in order to get amano_pikamee ⚡️
+awk -F"\t" -v OFS='\t' \
+'$1 >= 83 { print $2 }' \
+"$SCRIPT_DIR/../out/name_tokens_prevalence.raw.tsv" \
+> "$SCRIPT_DIR/../out/label_tokens.tsv"

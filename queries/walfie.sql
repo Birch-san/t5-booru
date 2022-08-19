@@ -590,7 +590,6 @@ insert into tags (booru, fid, tag, tag_id, tag_cat, danb_fr) values
   ("danbooru_manual_walfie", 4236163, "high_ponytail", 301, 0, "GENERAL"),
   ("danbooru_manual_walfie", 4236163, "ring-con", 302, 0, "GENERAL"),
   ("danbooru_manual_walfie", 4236163, "squeezing", 303, 0, "GENERAL"),
-  ("danbooru_manual_walfie", 4236163, "ring_fit_adventure", 528, 0, "GENERAL"),
   ("danbooru_manual_walfie", 4236163, "walfie", 398, 1, "ARTIST"),
   ("danbooru_manual_walfie", 4236163, "hololive", 401, 3, "hololive"),
   ("danbooru_manual_walfie", 4236163, "hololive_english", 402, 3, "hololive"),

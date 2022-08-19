@@ -37,6 +37,7 @@ class BooruPiece():
     if (self.token_registry.has_token(label)):
       return (label,)
     if self._label_eligible_for_split(label):
+      # TODO we need to also split on (cosplay). there were over 900 general tokens which included it
       splits: list[str] = self._split_label(label)
       if len(splits) > 1:
         return tuple(chain.from_iterable(self.tokenize_label(token) for token in splits))

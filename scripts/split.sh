@@ -1,20 +1,35 @@
-#!/usr/bin/env zsh
-cat <(awk -F"\t" '$2 > 33' "$HOME/machine-learning/tokenization/all-general-tags-prevalence.tsv") \
-"$HOME/git/walfie-gif-dl/out/general_tags_manual.tsv" | \
-awk -F"\t" -v OFS='\t' 'length($1) <= 4 {
-  counts[tolower($1)] += $2;
+#!/usr/bin/env bash
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# we filter to at least 31 occurrences, in order to get vaporwave 😎
+awk -F"\t" -v OFS='\t' \
+'$2 && length($2) <= 4 {
+  counts[$2] += $1;
 }
-length($1) > 4 {
-  split(tolower($1), parts, /[-_]/);
+length($2) > 4 {
+  if ($2 ~ /_\(cosplay\)$/) {
+    cosplay_count++;
+    next;
+  }
+  split($2, parts, /[-_]/);
   for(i in parts) {
     part = parts[i];
-    counts[part] += $2;
+    if (part) {
+      counts[part] += $1;
+    }
   }
 }
 END {
+  if (cosplay_count) {
+    print cosplay_count, "(cosplay)";
+  }
   for(i in counts) {
     count = counts[i];
     print count, i;
   }
-}' | sort -rn | \
-awk -F"\t" '$0=$2'
+}' \
+"$SCRIPT_DIR/../out/general_label_prevalence.raw.tsv" \
+| sort -rn \
+| awk -F"\t" '$1 >= 31 { print $2 }' \
+> "$SCRIPT_DIR/../out/general_tokens.tsv"
