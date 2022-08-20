@@ -25,57 +25,80 @@ Download from booru-chars distributions the `*_tags.tsv` and `*_files.tsv`.
 
 ### Create & populate database
 
-Construct a sqlite database.
+[`scripts/make_db.sh`](scripts/make_db.sh).
 
-```bash
-sqlite3 -batch booru-chars.db <<'SQL'
-.mode tabs
-create table files (
-  booru text not null,
-  fid integer not null,
-  shard text not null,
-  file_name text not null,
-  torr_md5 text,
-  orig_ext text,
-  orig_md5 text,
-  file_size integer,
-  img_width_torr integer,
-  img_height_torr integer,
-  jq text,
-  torr_path text,
-  tags_copyr text,
-  tags_char text,
-  tags_artist text,
-  primary key(booru, fid)
-);
-create index idx_file_name on files (file_name);
-create table tags (
-  booru text,
-  fid integer,
-  tag text,
-  tag_id integer,
-  tag_cat integer,
-  danb_fr text,
-  foreign key (booru, fid)
-    references files (booru, fid)
-    on delete cascade
-    on update no action
-);
-create index idx_tag on tags (tag);
-create index idx_tag_cat on tags (tag_cat);
-create index idx_booru_fid on tags (booru, fid);
-.read ./queries/walfie.sql
-.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021a/V2021A_files.tsv"' files
-.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021a/V2021A_tags.tsv"' tags
-.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021b/V2021B_files.tsv"' files
-.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021b/V2021B_tags.tsv"' tags
-.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021c/V2021C_files.tsv"' files
-.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021c/V2021C_tags.tsv"' tags
-.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2021d/V2021D_files.tsv"' files
-.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2021d/V2021D_tags.tsv"' tags
-.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2022a/V2022A_files.tsv"' files
-.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2022a/V2022A_tags.tsv"' tags
-.import '|awk -F"\t" "NR>1 && ! /\"/ { for(i=1; i<=2; i++) { printf \"%s\t\", \$i; } printf \"Safebooru 2021a\t\"; for(i=3; i<=7; i++) { printf \"%s\t\", \$i; } split(\$8, size_parts, \"x\"); printf \"%d\t%d\t\", size_parts[1], size_parts[2];  for(i=9; i<=12; i++) { printf \"%s\t\", \$i; } printf \"%s\n\", \$13; }" "$HOME/machine-learning/booru-chars/Safebooru 2022b/V2022B_files.tsv"' files
-.import --skip 1 '|cat "$HOME/machine-learning/booru-chars/Safebooru 2022b/V2022B_tags.tsv"' tags
-SQL
+Inputs:
+
+- [`queries/walfie.sql`](queries/walfie.sql)
+- `~/machine-learning/booru-chars/Safebooru 2021a/V2021A_files.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2021a/V2021A_tags.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2021b/V2021B_files.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2021b/V2021B_tags.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2021c/V2021C_files.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2021c/V2021C_tags.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2021d/V2021D_files.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2021d/V2021D_tags.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2022a/V2022A_files.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2022a/V2022A_tags.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2022b/V2022B_files.tsv`
+- `~/machine-learning/booru-chars/Safebooru 2022b/V2022B_tags.tsv`
+
+Outputs:
+
+- `booru-chars.db`
+
+We use `! /\"/` and `grep -v -e "\""` to avoid ingesting double-quote characters. for example, `V2022B_tags.tsv` contains a line with double-quotes:
+
 ```
+www.zerochan.net	3633380	"I'm_One_Dapping_Fella"_S...	0	3	COPYRIGHT
+```
+
+We use `uniq` on `V2021C_tags.tsv` to eliminate duplicate data for `(booru='chan.sankakucomplex.com', FID=25521675)`:
+
+```
+chan.sankakucomplex.com	25521675	genshin_impact	1528497	3	genshin_impact
+chan.sankakucomplex.com	25521675	genshin_impact	1528497	3	genshin_impact
+chan.sankakucomplex.com	25521675	zhongli_(genshin_impact)	1600114	4	genshin_impact
+chan.sankakucomplex.com	25521675	zhongli_(genshin_impact)	1600114	4	genshin_impact
+```
+
+which would violate the primary key of `tags`. Fortunately the duplicates are contiguous.
+
+### Create tag lists
+
+[`scripts/make_tag_lists.sh`](scripts/make_tag_lists.sh)
+
+Inputs:
+
+- `booru-chars.db`
+
+Outputs:
+
+- `out/general_label_prevalence.raw.tsv`
+- `out/name_tokens_prevalence.raw.tsv`
+
+### Create token lists
+
+#### General tokens
+
+[`scripts/split.sh`](scripts/split.sh)
+
+Inputs:
+
+- `out/general_label_prevalence.raw.tsv`
+
+Outputs:
+
+- `out/general_tokens.tsv`
+
+#### Non-general tokens
+
+[`scripts/top.sh`](scripts/top.sh)
+
+Inputs:
+
+- `out/name_tokens_prevalence.raw.tsv`
+
+Outputs:
+
+- `out/label_tokens.tsv`

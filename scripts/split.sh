@@ -8,11 +8,19 @@ awk -F"\t" -v OFS='\t' \
   counts[$2] += $1;
 }
 length($2) > 4 {
-  if ($2 ~ /_\(cosplay\)$/) {
-    cosplay_count++;
-    next;
+  rest = $2;
+  while (has_qualifier = match(rest, /^(.*)_\(([^)]*?)\)$/, qualifier_match)) {
+    rest = qualifier_match[1];
+    qualifier = qualifier_match[2];
+    counts[qualifier] += $1;
+    if (qualifier == "cosplay") {
+      # _(cosplay) qualifies a name label, so what precedes it can be used
+      # without any splitting
+      counts[rest] += $1;
+      next;
+    }
   }
-  split($2, parts, /[-_]/);
+  split(rest, parts, /[-_]/);
   for(i in parts) {
     part = parts[i];
     if (part) {
@@ -21,9 +29,6 @@ length($2) > 4 {
   }
 }
 END {
-  if (cosplay_count) {
-    print cosplay_count, "(cosplay)";
-  }
   for(i in counts) {
     count = counts[i];
     print count, i;
