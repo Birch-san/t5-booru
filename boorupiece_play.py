@@ -7,14 +7,17 @@ tokenizer = BooruPiece()
 # https://danbooru.donmai.us/wiki_pages/help:tags
 # _(cosplay) must be preceded by a name label, so we split into just two tokens
 # ('nero_claudius_(fate)', 'cosplay')
-
-# ('nero_claudius_(fate)', 'cosplay')
 tokens = tuple(tokenizer.tokenize_label('nero_claudius_(fate)_(cosplay)'))
 print(tokens)
 
 # <unk> token used when unknown
 # ('<unk>', 'cosplay')
 tokens = tuple(tokenizer.tokenize_label('nero_claudius_(swimsuit_caster)_(fate)_(cosplay)'))
+print(tokens)
+
+# for qualifiers other than cosplay, we accept multiple
+# ('orange', 'fruit', 'meme')
+tokens = tuple(tokenizer.tokenize_label('orange_(fruit)_(meme)'))
 print(tokens)
 
 # for qualifiers other than cosplay, we split what precedes it
