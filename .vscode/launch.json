@@ -146,13 +146,24 @@
         "--accelerator",
         "mps",
         "--batch_size",
-        "128",
+        // "128",
+        "2",
         "--caption_max_tokens",
-        "128"
+        // "128"
+        "32"
       ],
       "env": {
         "PYTORCH_ENABLE_MPS_FALLBACK": "1"
       }
+    },
+    {
+      "name": "Python: boorupiece play",
+      "type": "python",
+      "request": "launch",
+      "module": "boorupiece_play",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": []
     }
   ]
 }

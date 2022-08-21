@@ -1,8 +1,12 @@
 from __future__ import annotations
-from typing import List, Iterable
+from typing import List, Iterable, Optional, NamedTuple
 from itertools import chain
 import re
 from .booru_chars_token_registry import BooruCharsTokenRegistry
+
+class QualifiedLabel(NamedTuple):
+  nominal: str
+  qualifier: str
 
 class BooruPiece():
   token_registry: BooruCharsTokenRegistry
@@ -26,21 +30,43 @@ class BooruPiece():
     return len(label) > 4
   
   @staticmethod
-  def _split_label(label: str) -> List[str]:
+  def _split_on_qualifier(label: str) -> Optional[QualifiedLabel]:
+    matches = re.search(r"^(.*)_\(([^)]*?)\)$", label)
+    if matches is None:
+      return None
+    return QualifiedLabel(matches[1], matches[2])
+  
+  @staticmethod
+  def _split_on_delimiter(label: str) -> List[str]:
     return re.split(r'[-_]', label)
+  
+  def _tokenize_unsplittable_label(self, label: str) -> str:
+    return label if self.token_registry.has_token(label) else self.token_registry.unk_token
+  
+  def _tokenize_qualified_label(self, qualification: QualifiedLabel) -> Iterable[str]:
+    nominal, qualifier = qualification
+    qualifier_token: str = self._tokenize_unsplittable_label(qualifier)
+    if qualifier == "cosplay":
+      nominal_token: str = self._tokenize_unsplittable_label(nominal)
+      return (nominal_token, qualifier_token)
+    return [*self._tokenize_splittable_label(nominal), qualifier_token]
+
+  def _tokenize_splittable_label(self, label: str) -> Iterable[str]:
+    qualification: Optional[QualifiedLabel] = self._split_on_qualifier(label)
+    if qualification is not None:
+      return self._tokenize_qualified_label(qualification)
+    splits: list[str] = self._split_on_delimiter(label)
+    return tuple(self._tokenize_unsplittable_label(token) for token in splits)
   
   def tokenize_label(self, label: str) -> Iterable[str]:
     """
     Tokenize a label.
     Be sure to regularize your label first.
     """
-    if (self.token_registry.has_token(label)):
+    if self.token_registry.has_token(label):
       return (label,)
     if self._label_eligible_for_split(label):
-      # TODO we need to also split on (cosplay). there were over 900 general tokens which included it
-      splits: list[str] = self._split_label(label)
-      if len(splits) > 1:
-        return tuple(chain.from_iterable(self.tokenize_label(token) for token in splits))
+      return self._tokenize_splittable_label(label)
     return (self.token_registry.unk_token,)
   
   def tokenize_labels(self, labels: Iterable[str]) -> Iterable[str]:
