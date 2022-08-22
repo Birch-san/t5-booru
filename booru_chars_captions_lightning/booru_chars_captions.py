@@ -1,5 +1,6 @@
 from __future__ import annotations
 from functools import reduce
+from git import WorkTreeRepositoryUnsupported
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
 from torch.utils.data import DataLoader, IterableDataset, Dataset
@@ -9,6 +10,10 @@ from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, 
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from operator import add
+from multiprocessing import cpu_count
+from threading import Thread, local, Lock
+# import threading
+from queue import Queue
 
 from .db import create_connection
 from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_records, BooruFileId, TagRecord, TagCategory
@@ -32,8 +37,8 @@ class TagRetentionCategory(IntEnum):
 tag_category_retentions: Dict[TagCategory, TagRetentionCategory] = {
   TagCategory.GENERAL: TagRetentionCategory.EXPENDABLE,
   TagCategory.ARTIST: TagRetentionCategory.CRUCIAL,
-  TagCategory.FRANCHISE_0: TagRetentionCategory.CRUCIAL,
-  TagCategory.FRANCHISE_1: TagRetentionCategory.CRUCIAL,
+  TagCategory.COPYRIGHT: TagRetentionCategory.CRUCIAL,
+  TagCategory.CHARACTER: TagRetentionCategory.CRUCIAL,
 }
 def _classify_tag_category(tag_category: Optional[TagCategory]) -> TagRetentionCategory:
   # we are targeting Python 3.9 so sadly cannot use structural pattern matching
@@ -58,7 +63,7 @@ class TagWithTokens(HasTokens):
 def retain_tag_only(record_dto: TagRecordWithTokens) -> TagWithTokens:
   return TagWithTokens(
     tokens=record_dto.tokens,
-    tag=record_dto.record.TAG,
+    tag=record_dto.record.tag,
   )
 
 @dataclass
@@ -93,63 +98,44 @@ class Batch:
   unmasked: LongTensor
   masked: LongTensor
 
+GetCursor: TypeAlias = Callable[[], Cursor]
+SignalFinished: TypeAlias = Callable[[], None]
+
 @dataclass
 class BooruCharsCaptionsDatasetParams:
   file_ids: Iterable[BooruFileId]
-  get_cursor: Callable[[], Cursor]
+  get_cursor: GetCursor
+  is_validation: bool
 
 TokenizeLabel: TypeAlias = Callable[[str], Iterable[str]]
 EncodeToken: TypeAlias = Callable[[str], int]
 IsKnownToken: TypeAlias = Callable[[int], bool]
 
-class BooruCharsCaptionsDataset(IterableDataset):
-  file_ids: Iterable[BooruFileId]
-  get_cursor: Callable[[], Cursor]
-  tokenize_label: TokenizeLabel
-  encode_token: EncodeToken
-  is_known_token: IsKnownToken
-  caption_min_tokens: int
-  caption_max_crucial_tokens: int
-  caption_max_tokens: int
-  max_tokens_masked: int
-  mask_strategy_label_chance: int
+GetBooruFids: TypeAlias = Callable[[], Iterable[BooruFileId]]
+Enqueue: TypeAlias = Callable[[Example], None]
 
-  @staticmethod
-  def add_argparse_args(parent_parser: ArgumentParser) -> ArgumentParser:
-    parser = parent_parser.add_argument_group("BooruCharsCaptionsDataset")
-    parser.add_argument('--caption_max_tokens', type=int, default=32)
-    return parent_parser
-  
-  @classmethod
-  def from_argparse_args(cls, args: Union[Namespace, ArgumentParser], **kwargs):
-    return from_argparse_args(cls, args, **kwargs)
-
+class DatasetWorker(Thread):
+  enqueue: Enqueue
+  get_booru_fids: GetBooruFids
+  get_cursor: GetCursor
+  signal_finished: SignalFinished
   def __init__(
     self,
-    params: BooruCharsCaptionsDatasetParams,
-    tokenize_label: TokenizeLabel,
-    encode_token: EncodeToken,
-    is_known_token: IsKnownToken,
-    caption_max_tokens: int,
-    caption_min_tokens = 4,
-    caption_max_crucial_tokens = 4,
-    max_tokens_masked = 8,
-    mask_strategy_label_chance = 0.5,
-  ) -> None:
-    super(BooruCharsCaptionsDataset).__init__()
-    self.file_ids = params.file_ids
-    self.get_cursor = params.get_cursor
-    self.tokenize_label = tokenize_label
-    self.encode_token = encode_token
-    self.is_known_token = is_known_token
-    self.caption_min_tokens = caption_min_tokens
-    self.caption_max_crucial_tokens = caption_max_crucial_tokens
-    self.caption_max_tokens = caption_max_tokens
-    self.max_tokens_masked = max_tokens_masked
-    self.mask_strategy_label_chance = mask_strategy_label_chance
+    enqueue: Enqueue,
+    get_booru_fids: GetBooruFids,
+    get_cursor: GetCursor,
+    signal_finished: SignalFinished,
+    *args,
+    **kwargs
+  ):
+    super().__init__(*args, **kwargs)
+    self.enqueue = enqueue
+    self.get_booru_fids = get_booru_fids
+    self.get_cursor = get_cursor
+    self.signal_finished = signal_finished
   
   def _to_caption(self, file_id: BooruFileId) -> List[TagRecord]:
-    # print(f'file_ids for {BOORU}, {FID}:')
+    # print(f'file_ids for {booru}, {fid}:')
     # cur: Cursor = self.get_cursor()
     with closing(self.get_cursor()) as cur:
       tags: List[TagRecord] = get_tag_records(cur, file_id)
@@ -167,7 +153,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
     return [
       TagRecordWithTokens(
         record=record,
-        tokens=[self.encode_token(token) for token in self.tokenize_label(record.TAG)]
+        tokens=[self.encode_token(token) for token in self.tokenize_label(record.tag)]
        ) for record in records
     ]
   
@@ -187,7 +173,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
     """
     by_retention_list: List[RetentionClassified] = [
       RetentionClassified(
-        retention=_classify_tag_category(tag_record_dto.record.CAT),
+        retention=_classify_tag_category(tag_record_dto.record.cat),
         tag_dto=retain_tag_only(tag_record_dto)
       ) for tag_record_dto in tag_record_dtos
     ]
@@ -317,8 +303,83 @@ class BooruCharsCaptionsDataset(IterableDataset):
       unmasked=unmasked,
       masked=masked,
     )
+  
+  def run(self) -> None:
+    booru_fids = self.get_booru_fids()
+    for file_id in booru_fids:
+      tags: List[TagRecord] = self._to_caption(file_id)
+      tag_dtos: Optional[List[TagWithTokens]] = self._tokens_of_suitable_captions(tags)
+      if tag_dtos is None:
+        continue
+      example: Example = self._to_example(tag_dtos)
+      self.enqueue(example)
+    self.signal_finished()
+    
+
+class BooruCharsCaptionsDataset(IterableDataset):
+  file_ids: Iterable[BooruFileId]
+  get_cursor: GetCursor
+  tokenize_label: TokenizeLabel
+  encode_token: EncodeToken
+  is_known_token: IsKnownToken
+  caption_min_tokens: int
+  caption_max_crucial_tokens: int
+  caption_max_tokens: int
+  max_tokens_masked: int
+  mask_strategy_label_chance: int
+  num_threads: int
+  q: Queue
+  threads_finished: int
+
+  @staticmethod
+  def add_argparse_args(parent_parser: ArgumentParser) -> ArgumentParser:
+    parser = parent_parser.add_argument_group("BooruCharsCaptionsDataset")
+    parser.add_argument('--caption_max_tokens', type=int, default=32)
+    parser.add_argument('--dataset_num_threads', type=int, default=max(1, cpu_count() - 2))
+    parser.add_argument('--dataset_queue_max_size', type=int, default=512)
+    return parent_parser
+  
+  @classmethod
+  def from_argparse_args(cls, args: Union[Namespace, ArgumentParser], **kwargs):
+    return from_argparse_args(cls, args, **kwargs)
+
+  def __init__(
+    self,
+    params: BooruCharsCaptionsDatasetParams,
+    tokenize_label: TokenizeLabel,
+    encode_token: EncodeToken,
+    is_known_token: IsKnownToken,
+    caption_max_tokens: int,
+    dataset_num_threads: int,
+    dataset_queue_max_size: int,
+    caption_min_tokens = 4,
+    caption_max_crucial_tokens = 4,
+    max_tokens_masked = 8,
+    mask_strategy_label_chance = 0.5,
+  ) -> None:
+    super(BooruCharsCaptionsDataset).__init__()
+    self.file_ids = params.file_ids
+    self.get_cursor = params.get_cursor
+    self.tokenize_label = tokenize_label
+    self.encode_token = encode_token
+    self.is_known_token = is_known_token
+    self.caption_min_tokens = caption_min_tokens
+    self.caption_max_crucial_tokens = caption_max_crucial_tokens
+    self.caption_max_tokens = caption_max_tokens
+    self.max_tokens_masked = max_tokens_masked
+    self.mask_strategy_label_chance = mask_strategy_label_chance
+    self.threads_finished = 0
+    self.num_threads = max(dataset_num_threads//2 if params.is_validation else dataset_num_threads-dataset_num_threads//2, 1)
+    self.q = Queue(maxsize=dataset_queue_max_size)
+  
+  def _thread() -> None:
+    return
 
   def __iter__(self) -> Iterator[Example]:
+    for rank in range(self.num_threads):
+      DatasetWorker().start()
+    while self.threads_finished < self.num_threads:
+
     for file_id in self.file_ids:
       tags: List[TagRecord] = self._to_caption(file_id)
       tag_dtos: Optional[List[TagWithTokens]] = self._tokens_of_suitable_captions(tags)
@@ -399,13 +460,15 @@ class BooruCharsCaptions(LightningDataModule):
       self.train_dataset = self.dataset_factory(
         BooruCharsCaptionsDatasetParams(
           file_ids=map(enumeration_to_value, training),
-          get_cursor=get_cursor
+          get_cursor=get_cursor,
+          is_validation=False
         )
       )
       self.validation_dataset = self.dataset_factory(
         BooruCharsCaptionsDatasetParams(
           file_ids=map(enumeration_to_value, validation),
-          get_cursor=get_cursor
+          get_cursor=get_cursor,
+          is_validation=True
         )
       )
 
@@ -467,12 +530,12 @@ class BooruCharsCaptions(LightningDataModule):
 
   def train_dataloader(self) -> DataLoader:
     assert self.train_dataset is not None
-    return self._generic_dataloader(self.train_dataset)
+    return self._generic_dataloader(self.train_dataset, num_workers=max(self.num_workers-self.num_workers//2, 1))
 
   def val_dataloader(self) -> DataLoader:
     assert self.validation_dataset is not None
-    return self._generic_dataloader(self.validation_dataset)
+    return self._generic_dataloader(self.validation_dataset, num_workers=max(self.num_workers//2, 1))
 
   def test_dataloader(self) -> DataLoader:
     assert self.test_dataset is not None
-    return self._generic_dataloader(self.test_dataset)
+    return self._generic_dataloader(self.test_dataset, num_workers=1)
