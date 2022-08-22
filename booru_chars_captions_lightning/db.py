@@ -21,5 +21,5 @@ where compile_options like 'THREADSAFE=%'
 def create_connection(db_file: str) -> Connection:
   """ create a database connection to a SQLite database """
   # https://ricardoanderegg.com/posts/python-sqlite-thread-safety/
-  check_same_thread=get_sqlite3_thread_safety() is not 3
+  check_same_thread=get_sqlite3_thread_safety() != 3
   return sqlite3.connect(db_file, check_same_thread=check_same_thread)

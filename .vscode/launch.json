@@ -146,11 +146,11 @@
         "--accelerator",
         "mps",
         "--batch_size",
-        // "128",
-        "2",
+        "128",
+        // "2",
         "--caption_max_tokens",
-        // "128"
-        "32"
+        "128"
+        // "32"
       ],
       "env": {
         "PYTORCH_ENABLE_MPS_FALLBACK": "1"

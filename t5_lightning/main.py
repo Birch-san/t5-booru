@@ -42,7 +42,6 @@ def main(args: Namespace) -> None:
     dataset_factory=dataset_factory,
   )
   trainer.fit(model, datamodule=datamodule)
-  # trainer.test(model, datamodule=datamodule)
 
 if __name__ == "__main__":
   # https://pytorch-lightning.readthedocs.io/en/stable/common/hyperparameters.html?highlight=add_model_specific_args#argparser-best-practices
