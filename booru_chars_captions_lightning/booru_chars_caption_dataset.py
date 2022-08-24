@@ -98,8 +98,8 @@ CloseHandle: TypeAlias = Callable[[], None]
 GetCursor: TypeAlias = Callable[[], Cursor]
 
 class BooruCharsCaptionsDataset(IterableDataset):
-  get_cursor: GetCursor
-  close_conn: CloseHandle
+  get_cursor: Optional[GetCursor]
+  close_conn: Optional[CloseHandle]
   tokenize_label: TokenizeLabel
   encode_token: EncodeToken
   is_known_token: IsKnownToken
@@ -110,6 +110,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
   mask_strategy_label_chance: int
   is_validation: bool
   dataset_split: DatasetSplit
+  sqlite_db_path: str
 
   @staticmethod
   def add_argparse_args(parent_parser: ArgumentParser) -> ArgumentParser:
@@ -134,11 +135,9 @@ class BooruCharsCaptionsDataset(IterableDataset):
     mask_strategy_label_chance = 0.5,
   ) -> None:
     super(BooruCharsCaptionsDataset).__init__()
-    conn: Connection = create_connection(params.sqlite_db_path)
-    self.get_cursor = conn.cursor
-    self.close_conn = conn.close
     self.is_validation = params.is_validation
     self.dataset_split = params.dataset_split
+    self.sqlite_db_path = params.sqlite_db_path
     self.tokenize_label = tokenize_label
     self.encode_token = encode_token
     self.is_known_token = is_known_token
@@ -149,11 +148,15 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self.mask_strategy_label_chance = mask_strategy_label_chance
   
   def teardown(self) -> None:
-    self.close_conn()
+    if (callable(self.close_conn)):
+      self.close_conn()
+    self.close_conn = None
+    self.get_cursor = None
   
   def _to_caption(self, file_id: BooruFileId) -> List[TagRecord]:
     # print(f'file_ids for {booru}, {fid}:')
     # cur: Cursor = self.get_cursor()
+    assert callable(self.get_cursor)
     with closing(self.get_cursor()) as cur:
       tags: List[TagRecord] = get_tag_records(cur, file_id)
       # print(f'len: {len(tags)}')
@@ -338,21 +341,24 @@ class BooruCharsCaptionsDataset(IterableDataset):
 
     total, validation_count = self.dataset_split
     train_count: int = total-validation_count
-    
-    with closing(self.get_cursor()) as cur:
-      file_ids: Iterable[BooruFileId] = get_validation_fids(
-        cur=cur,
-        validation_quantity=self.dataset_split.validation,
-        rank=worker_id,
-        workers=num_workers,
-      ) if self.is_validation else get_train_fids(
-        cur=cur,
-        train_quantity=train_count,
-        validation_count=validation_count,
-        rank=worker_id,
-        workers=num_workers,
-      )
-      for booru_fid in file_ids:
-        example: Optional[Example] = self._booru_fid_to_example(booru_fid=booru_fid)
-        if example is not None:
-          yield example
+
+    with closing(create_connection(self.sqlite_db_path)) as conn:
+      self.get_cursor = conn.cursor
+      self.close_conn = conn.close
+      with closing(self.get_cursor()) as cur:
+        file_ids: Iterable[BooruFileId] = get_validation_fids(
+          cur=cur,
+          validation_quantity=self.dataset_split.validation,
+          rank=worker_id,
+          workers=num_workers,
+        ) if self.is_validation else get_train_fids(
+          cur=cur,
+          train_quantity=train_count,
+          validation_count=validation_count,
+          rank=worker_id,
+          workers=num_workers,
+        )
+        for booru_fid in file_ids:
+          example: Optional[Example] = self._booru_fid_to_example(booru_fid=booru_fid)
+          if example is not None:
+            yield example
