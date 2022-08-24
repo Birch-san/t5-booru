@@ -1,18 +1,15 @@
 from __future__ import annotations
 from functools import reduce
-from git import WorkTreeRepositoryUnsupported
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
-from torch.utils.data import DataLoader, IterableDataset, Dataset
+from torch.utils.data import DataLoader, IterableDataset, Dataset, get_worker_info
 from os.path import join
 from os import environ
-from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set, Union
+from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set, Union, Generic
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
 from operator import add
 from multiprocessing import cpu_count
-# from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures import ThreadPoolExecutor
 
 from .db import create_connection
 from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_records, BooruFileId, TagRecord, TagCategory
@@ -103,7 +100,14 @@ GetCursor: TypeAlias = Callable[[], Cursor]
 class BooruCharsCaptionsDatasetParams:
   file_ids: Iterable[BooruFileId]
   get_cursor: GetCursor
-  max_workers: int
+
+T = TypeVar('T', bound=Dataset)
+
+class _WorkerInfo(Generic[T]):
+  id: int
+  num_workers: int
+  seed: int
+  dataset: T
 
 TokenizeLabel: TypeAlias = Callable[[str], Iterable[str]]
 EncodeToken: TypeAlias = Callable[[str], int]
@@ -120,7 +124,6 @@ class BooruCharsCaptionsDataset(IterableDataset):
   caption_max_tokens: int
   max_tokens_masked: int
   mask_strategy_label_chance: int
-  max_workers: int
 
   @staticmethod
   def add_argparse_args(parent_parser: ArgumentParser) -> ArgumentParser:
@@ -155,7 +158,6 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self.caption_max_tokens = caption_max_tokens
     self.max_tokens_masked = max_tokens_masked
     self.mask_strategy_label_chance = mask_strategy_label_chance
-    self.max_workers = params.max_workers
   
   def _to_caption(self, file_id: BooruFileId) -> List[TagRecord]:
     # print(f'file_ids for {booru}, {fid}:')
@@ -336,11 +338,15 @@ class BooruCharsCaptionsDataset(IterableDataset):
     return example
 
   def __iter__(self) -> Iterator[Example]:
-    with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-      # return (example for example in executor.map(self._booru_fid_to_example, self.file_ids) if example is not None)
-      for example in executor.map(self._booru_fid_to_example, self.file_ids):
-        if example is not None:
-          yield example
+    worker_info: Optional[_WorkerInfo[BooruCharsCaptionsDataset]] = get_worker_info()
+    assert worker_info is not None
+    worker_info: _WorkerInfo[BooruCharsCaptionsDataset] = worker_info
+    worker_id = worker_info.id
+    num_workers = worker_info.num_workers
+    for booru_fid in self.file_ids:
+      example: Optional[Example] = self._booru_fid_to_example(booru_fid=booru_fid)
+      if example is not None:
+        yield example
 
 
 BooruCharsCaptionsDatasetFactory: TypeAlias = Callable[[BooruCharsCaptionsDatasetParams], BooruCharsCaptionsDataset]
@@ -349,7 +355,8 @@ class BooruCharsCaptions(LightningDataModule):
   batch_size: int
   validation_split_percentage: int
   test_quantity: int
-  max_workers: int
+  validation_workers: int
+  train_workers: int
   pad_tokens: PadTokens
   dataset_factory: BooruCharsCaptionsDatasetFactory
   sqlite_db_path: str
@@ -385,7 +392,8 @@ class BooruCharsCaptions(LightningDataModule):
     self.batch_size = batch_size
     self.validation_split_percentage = validation_split_percentage
     self.test_quantity = test_quantity
-    self.max_workers = data_max_workers
+    self.validation_workers = max(1, data_max_workers//2)
+    self.train_workers = max(1, data_max_workers-self.validation_workers)
     self.sqlite_db_path = sqlite_db_path
   
   @staticmethod
@@ -416,20 +424,16 @@ class BooruCharsCaptions(LightningDataModule):
       validation, training = partition(retain, enumerate(file_id_dtos))
       get_cursor = lambda: conn.cursor()
 
-      validation_workers = max(1, self.max_workers//2)
-      train_workers = max(1, self.max_workers-validation_workers)
       self.train_dataset = self.dataset_factory(
         BooruCharsCaptionsDatasetParams(
           file_ids=map(enumeration_to_value, training),
-          get_cursor=get_cursor,
-          max_workers=train_workers
+          get_cursor=get_cursor
         )
       )
       self.validation_dataset = self.dataset_factory(
         BooruCharsCaptionsDatasetParams(
           file_ids=map(enumeration_to_value, validation),
-          get_cursor=get_cursor,
-          max_workers=validation_workers
+          get_cursor=get_cursor
         )
       )
 
@@ -486,17 +490,17 @@ class BooruCharsCaptions(LightningDataModule):
     )
     return batch
   
-  def _generic_dataloader(self, dataset: Dataset) -> DataLoader:
-    return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self.collate_fn)
+  def _generic_dataloader(self, dataset: Dataset, num_workers: int) -> DataLoader:
+    return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self.collate_fn, num_workers=num_workers)
 
   def train_dataloader(self) -> DataLoader:
     assert self.train_dataset is not None
-    return self._generic_dataloader(self.train_dataset)
+    return self._generic_dataloader(self.train_dataset, num_workers=self.train_workers)
 
   def val_dataloader(self) -> DataLoader:
     assert self.validation_dataset is not None
-    return self._generic_dataloader(self.validation_dataset)
+    return self._generic_dataloader(self.validation_dataset, num_workers=self.validation_workers)
 
   def test_dataloader(self) -> DataLoader:
     assert self.test_dataset is not None
-    return self._generic_dataloader(self.test_dataset)
+    return self._generic_dataloader(self.test_dataset, max_workers=1)
