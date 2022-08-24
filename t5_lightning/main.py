@@ -3,7 +3,8 @@ from pytorch_lightning import Trainer
 from .model import IsPadToken, T5Booru
 from argparse import ArgumentParser, Namespace
 from boorupiece_simple.boorupiece import BooruPiece
-from booru_chars_captions_lightning.booru_chars_captions import PadTokens, BooruCharsCaptions, BooruCharsCaptionsDatasetFactory, BooruCharsCaptionsDataset, TokenizeLabel, IsKnownToken, EncodeToken
+from booru_chars_captions_lightning.booru_chars_captions import PadTokens, BooruCharsCaptions, BooruCharsCaptionsDatasetFactory
+from booru_chars_captions_lightning.booru_chars_caption_dataset import BooruCharsCaptionsDataset, TokenizeLabel, IsKnownToken, EncodeToken
 from transformers.models.t5.configuration_t5 import T5Config
 
 def main(args: Namespace) -> None:
