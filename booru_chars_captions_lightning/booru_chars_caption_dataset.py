@@ -1,22 +1,14 @@
 from __future__ import annotations
 from functools import reduce
-from pytorch_lightning import LightningDataModule
-from torch import LongTensor
-from torch.utils.data import DataLoader, IterableDataset, Dataset, get_worker_info
-from os.path import join
-from os import environ
+from torch.utils.data import IterableDataset, Dataset#, get_worker_info
 from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set, Union, Generic
 from typing_extensions import TypeAlias
-from sqlite3 import Connection, Cursor
+from sqlite3 import Cursor
 from operator import add
-from multiprocessing import cpu_count
 
-from .db import create_connection
-from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_records, BooruFileId, TagRecord, TagCategory
+from .booru_db import get_tag_records, BooruFileId, TagRecord, TagCategory
 from argparse import ArgumentParser, Namespace
 from pytorch_lightning.utilities.argparse import from_argparse_args
-from more_itertools import partition
-from util.enumeration_to_value import enumeration_to_value
 from contextlib import closing
 from dataclasses import dataclass
 from enum import IntEnum, auto

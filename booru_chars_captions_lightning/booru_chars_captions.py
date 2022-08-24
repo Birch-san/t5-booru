@@ -1,28 +1,21 @@
 from __future__ import annotations
-from functools import reduce
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
-from torch.utils.data import DataLoader, IterableDataset, Dataset, get_worker_info
+from torch.utils.data import DataLoader, Dataset
 from os.path import join
 from os import environ
-from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set, Union, Generic
+from typing import Optional, Iterator, Callable, List
 from typing_extensions import TypeAlias
 from sqlite3 import Connection, Cursor
-from operator import add
 from multiprocessing import cpu_count
 
 from .db import create_connection
-from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, get_tag_records, BooruFileId, TagRecord, TagCategory
+from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, BooruFileId
 from .booru_chars_caption_dataset import BooruCharsCaptionsDataset, BooruCharsCaptionsDatasetParams, Example
-from argparse import ArgumentParser, Namespace
-from pytorch_lightning.utilities.argparse import from_argparse_args
+from argparse import ArgumentParser
 from more_itertools import partition
 from util.enumeration_to_value import enumeration_to_value
-from contextlib import closing
 from dataclasses import dataclass
-from enum import IntEnum, auto
-from itertools import groupby, chain
-from random import shuffle, sample, random
 
 BooruCharsCaptionsDatasetFactory: TypeAlias = Callable[[BooruCharsCaptionsDatasetParams], BooruCharsCaptionsDataset]
 
@@ -58,7 +51,7 @@ class BooruCharsCaptions(LightningDataModule):
     parser.add_argument('--validation_split_percentage', type=int, default=5)
     parser.add_argument('--test_quantity', type=int, default=32)
     parser.add_argument('--sqlite_db_path', type=str, default=join(environ['HOME'], 'machine-learning/booru-chars/booru-chars.db'))
-    parser.add_argument('--data_max_workers', type=int, default=max(1, cpu_count() - 3))
+    parser.add_argument('--data_max_workers', type=int, default=2)#max(1, cpu_count() - 3))
     return parent_parser
 
   def __init__(
