@@ -93,18 +93,20 @@ def get_dataset_split(
   validation_split_coeff = 0.05,
   validation_shards: Iterable[str] = ('Safebooru 2021a', 'Safebooru 2021b', 'Safebooru 2021c', 'Safebooru 2021d', 'Safebooru 2022a', 'Safebooru 2022b', 'manual_walfie_0'),
 ) -> DatasetSplit:
-  return DatasetSplit(
-    cur.fetchone("""\
+  shards_template: str = ', '.join(f':validation_shard{ix}' for ix, _ in enumerate(validation_shards))
+  cur.execute(f"""\
 select
 count(*) as total,
 floor(count(*) * :validation_split) as validation
 from files
-where shard in :validation_shards
+where shard in ({shards_template})
 """, {
-      "validation_split": validation_split_coeff,
-      "validation_shards": validation_shards,
-    })
-  )
+    "validation_split": validation_split_coeff,
+    **{
+      f'validation_shard{ix}': value for ix, value in enumerate(validation_shards)
+    },
+  })
+  return DatasetSplit(*cur.fetchone())
 
 def get_validation_fids(
   cur: _Queryable,
@@ -114,17 +116,20 @@ def get_validation_fids(
   workers = 1,
 ) -> Iterator[BooruFileId]:
   shard_size: float = validation_quantity / workers
-  cur.execute("""\
+  shards_template: str = ', '.join(f':validation_shard{ix}' for ix, _ in enumerate(validation_shards))
+  cur.execute(f"""\
 select f.booru, f.fid
 from files f
-where shard in :validation_shards
+where shard in ({shards_template})
 order by torr_md5
 limit :limit
 offset :offset
 """, {
     "limit": int(shard_size),
     "offset": int(shard_size * rank),
-    "validation_shards": validation_shards,
+    **{
+      f'validation_shard{ix}': value for ix, value in enumerate(validation_shards)
+    },
   })
   return file_ids_to_dtos(cur)
 
@@ -135,12 +140,13 @@ def get_recognisable_validation_fids(
   validation_shards: Iterable[str] = ('Safebooru 2021a', 'Safebooru 2021b', 'Safebooru 2021c', 'Safebooru 2021d', 'Safebooru 2022a', 'Safebooru 2022b', 'manual_walfie_0'),
   blessed_franchises: Iterable[str] = ('hololive', 'touhou'),
 ) -> Iterator[BooruFileId]:
-  cur.execute("""\
+  shards_template: str = ', '.join(f':validation_shard{ix}' for ix, _ in enumerate(validation_shards))
+  cur.execute(f"""\
 select f.booru, f.fid
 from (
   select f2.booru, f2.fid
   from files f2
-  where f2.shard in :validation_shards
+  where f2.shard in ({shards_template})
   order by torr_md5
   limit :validation_quantity
 ) f
@@ -154,9 +160,11 @@ where exists(
 limit :example_quantity
 """, {
     "validation_quantity": validation_quantity,
-    "validation_shards": validation_shards,
     "example_quantity": min(validation_quantity, example_quantity),
-    "blessed_franchises": blessed_franchises
+    "blessed_franchises": blessed_franchises,
+    **{
+      f'validation_shard{ix}': value for ix, value in enumerate(validation_shards)
+    },
   })
   return file_ids_to_dtos(cur)
 
@@ -170,13 +178,14 @@ def get_train_fids(
   workers = 1,
 ) -> Iterator[BooruFileId]:
   shard_size: float = train_quantity / workers
-  return cur.execute("""\
+  shards_template: str = ', '.join(f':validation_shard{ix}' for ix, _ in enumerate(validation_shards))
+  cur.execute(f"""\
 select f.booru, f.fid
 from files f
 where (f.booru, f.fid) not in (
   select f2.booru, f2.fid
   from files f2
-  where f2.shard in :validation_shards
+  where f2.shard in ({shards_template})
   order by torr_md5
   limit :validation_limit
 )
@@ -185,8 +194,10 @@ limit :limit
 offset :offset
 """, {
     "validation_limit": validation_quantity,
-    "validation_shards": validation_shards,
     "limit": int(shard_size),
-    "offset": int(shard_size * rank)
+    "offset": int(shard_size * rank),
+    **{
+      f'validation_shard{ix}': value for ix, value in enumerate(validation_shards)
+    },
   })
   return file_ids_to_dtos(cur)

@@ -1,12 +1,14 @@
 from __future__ import annotations
 from functools import reduce
-from torch.utils.data import IterableDataset, Dataset#, get_worker_info
+from torch.utils.data import IterableDataset, Dataset, get_worker_info
 from typing import Optional, Iterator, Iterable, Callable, List, Dict, TypeVar, Set, Union, Generic
 from typing_extensions import TypeAlias
-from sqlite3 import Cursor
+from sqlite3 import Cursor, Connection
+from contextlib import closing
 from operator import add
 
-from .booru_db import get_tag_records, BooruFileId, TagRecord, TagCategory
+from .db import create_connection
+from .booru_db import get_tag_records, BooruFileId, TagRecord, TagCategory, DatasetSplit, get_train_fids, get_validation_fids
 from argparse import ArgumentParser, Namespace
 from pytorch_lightning.utilities.argparse import from_argparse_args
 from contextlib import closing
@@ -73,12 +75,11 @@ class ClassifiedCountedTagDtos:
   def token_count(self) -> int:
     return self.crucial.token_count + self.expendable.token_count
 
-GetCursor: TypeAlias = Callable[[], Cursor]
-
 @dataclass
 class BooruCharsCaptionsDatasetParams:
-  file_ids: Iterable[BooruFileId]
-  get_cursor: GetCursor
+  sqlite_db_path: str
+  dataset_split: DatasetSplit
+  is_validation: bool
 
 TokenMaskStategy: TypeAlias = Callable[[List[TagWithTokens]], List[int]]
 
@@ -93,10 +94,12 @@ class _WorkerInfo(Generic[T]):
 TokenizeLabel: TypeAlias = Callable[[str], Iterable[str]]
 EncodeToken: TypeAlias = Callable[[str], int]
 IsKnownToken: TypeAlias = Callable[[int], bool]
+CloseHandle: TypeAlias = Callable[[], None]
+GetCursor: TypeAlias = Callable[[], Cursor]
 
 class BooruCharsCaptionsDataset(IterableDataset):
-  file_ids: Iterable[BooruFileId]
   get_cursor: GetCursor
+  close_conn: CloseHandle
   tokenize_label: TokenizeLabel
   encode_token: EncodeToken
   is_known_token: IsKnownToken
@@ -105,6 +108,8 @@ class BooruCharsCaptionsDataset(IterableDataset):
   caption_max_tokens: int
   max_tokens_masked: int
   mask_strategy_label_chance: int
+  is_validation: bool
+  dataset_split: DatasetSplit
 
   @staticmethod
   def add_argparse_args(parent_parser: ArgumentParser) -> ArgumentParser:
@@ -129,8 +134,11 @@ class BooruCharsCaptionsDataset(IterableDataset):
     mask_strategy_label_chance = 0.5,
   ) -> None:
     super(BooruCharsCaptionsDataset).__init__()
-    self.file_ids = params.file_ids
-    self.get_cursor = params.get_cursor
+    conn: Connection = create_connection(params.sqlite_db_path)
+    self.get_cursor = conn.cursor
+    self.close_conn = conn.close
+    self.is_validation = params.is_validation
+    self.dataset_split = params.dataset_split
     self.tokenize_label = tokenize_label
     self.encode_token = encode_token
     self.is_known_token = is_known_token
@@ -139,6 +147,9 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self.caption_max_tokens = caption_max_tokens
     self.max_tokens_masked = max_tokens_masked
     self.mask_strategy_label_chance = mask_strategy_label_chance
+  
+  def teardown(self) -> None:
+    self.close_conn()
   
   def _to_caption(self, file_id: BooruFileId) -> List[TagRecord]:
     # print(f'file_ids for {booru}, {fid}:')
@@ -319,12 +330,29 @@ class BooruCharsCaptionsDataset(IterableDataset):
     return example
 
   def __iter__(self) -> Iterator[Example]:
-    # worker_info: Optional[_WorkerInfo[BooruCharsCaptionsDataset]] = get_worker_info()
-    # assert worker_info is not None
-    # worker_info: _WorkerInfo[BooruCharsCaptionsDataset] = worker_info
-    # worker_id = worker_info.id
-    # num_workers = worker_info.num_workers
-    for booru_fid in self.file_ids:
-      example: Optional[Example] = self._booru_fid_to_example(booru_fid=booru_fid)
-      if example is not None:
-        yield example
+    worker_info: Optional[_WorkerInfo[BooruCharsCaptionsDataset]] = get_worker_info()
+    assert worker_info is not None
+    worker_info: _WorkerInfo[BooruCharsCaptionsDataset] = worker_info
+    worker_id = worker_info.id
+    num_workers = worker_info.num_workers
+
+    total, validation_count = self.dataset_split
+    train_count: int = total-validation_count
+    
+    with closing(self.get_cursor()) as cur:
+      file_ids: Iterable[BooruFileId] = get_validation_fids(
+        cur=cur,
+        validation_quantity=self.dataset_split.validation,
+        rank=worker_id,
+        workers=num_workers,
+      ) if self.is_validation else get_train_fids(
+        cur=cur,
+        train_quantity=train_count,
+        validation_count=validation_count,
+        rank=worker_id,
+        workers=num_workers,
+      )
+      for booru_fid in file_ids:
+        example: Optional[Example] = self._booru_fid_to_example(booru_fid=booru_fid)
+        if example is not None:
+          yield example

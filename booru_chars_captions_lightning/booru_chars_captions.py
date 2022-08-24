@@ -2,19 +2,15 @@ from __future__ import annotations
 from pytorch_lightning import LightningDataModule
 from torch import LongTensor
 from torch.utils.data import DataLoader, Dataset
-from os.path import join
-from os import environ
-from typing import Optional, Iterator, Callable, List
+from typing import Optional, Callable, List
 from typing_extensions import TypeAlias
-from sqlite3 import Connection, Cursor
 from multiprocessing import cpu_count
+from contextlib import closing
 
 from .db import create_connection
-from .booru_db import get_file_ids_from_nth, get_first_n_file_ids, file_ids_to_dtos, BooruFileId
+from .booru_db import get_dataset_split, DatasetSplit
 from .booru_chars_caption_dataset import BooruCharsCaptionsDataset, BooruCharsCaptionsDatasetParams, Example
 from argparse import ArgumentParser
-from more_itertools import partition
-from util.enumeration_to_value import enumeration_to_value
 from dataclasses import dataclass
 
 BooruCharsCaptionsDatasetFactory: TypeAlias = Callable[[BooruCharsCaptionsDatasetParams], BooruCharsCaptionsDataset]
@@ -31,8 +27,7 @@ PadTokensKnownLength: TypeAlias = Callable[[List[int]], List[int]]
 
 class BooruCharsCaptions(LightningDataModule):
   batch_size: int
-  validation_split_percentage: int
-  test_quantity: int
+  validation_split_coeff: int
   validation_workers: int
   train_workers: int
   pad_tokens: PadTokens
@@ -40,7 +35,6 @@ class BooruCharsCaptions(LightningDataModule):
   sqlite_db_path: str
   train_dataset: Optional[BooruCharsCaptionsDataset] = None
   validation_dataset: Optional[BooruCharsCaptionsDataset] = None
-  test_dataset: Optional[BooruCharsCaptionsDataset] = None
   close_fit: Optional[Callable[[], None]] = None
   close_test: Optional[Callable[[], None]] = None
 
@@ -49,8 +43,7 @@ class BooruCharsCaptions(LightningDataModule):
     parser = parent_parser.add_argument_group("BooruCharsCaptions")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument('--validation_split_percentage', type=int, default=5)
-    parser.add_argument('--test_quantity', type=int, default=32)
-    parser.add_argument('--sqlite_db_path', type=str, default=join(environ['HOME'], 'machine-learning/booru-chars/booru-chars.db'))
+    parser.add_argument('--sqlite_db_path', type=str, default='booru-chars.db')
     parser.add_argument('--data_max_workers', type=int, default=2)#max(1, cpu_count() - 3))
     return parent_parser
 
@@ -58,7 +51,6 @@ class BooruCharsCaptions(LightningDataModule):
     self,
     batch_size: int,
     validation_split_percentage: int,
-    test_quantity: int,
     data_max_workers: int,
     sqlite_db_path: str,
     pad_tokens: PadTokens,
@@ -68,69 +60,43 @@ class BooruCharsCaptions(LightningDataModule):
     self.pad_tokens = pad_tokens
     self.dataset_factory = dataset_factory
     self.batch_size = batch_size
-    self.validation_split_percentage = validation_split_percentage
-    self.test_quantity = test_quantity
+    self.validation_split_coeff = validation_split_percentage/100
     self.validation_workers = max(1, data_max_workers//2)
     self.train_workers = max(1, data_max_workers-self.validation_workers)
     self.sqlite_db_path = sqlite_db_path
-  
-  @staticmethod
-  def _close_handles(cur: Cursor, conn: Connection) -> None:
-    cur.close()
-    conn.close()
-  
-  @classmethod
-  def _get_handle_closer(cls: BooruCharsCaptions, cur: Cursor, conn: Connection) -> Callable[[], None]:
-    return lambda: cls._close_handles(cur, conn)
-  
-  @staticmethod
-  def _value_from_enumeration(cur: Cursor, conn: Connection) -> None:
-    cur.close()
-    conn.close()
 
   def setup(self, stage: Optional[str] = None) -> None:
     # Assign train/val datasets for use in dataloaders
     if stage == "fit" or stage is None:
       if callable(self.close_fit):
         self.close_fit()
-      conn: Connection = create_connection(self.sqlite_db_path)
-      cur: Cursor = conn.cursor()
-      self.close_fit = self._get_handle_closer(cur, conn)
-      file_ids: Cursor = get_file_ids_from_nth(cur, self.test_quantity)
-      file_id_dtos: Iterator[BooruFileId] = file_ids_to_dtos(file_ids)
-      retain = lambda enumeration: enumeration[0] % 100 < self.validation_split_percentage
-      validation, training = partition(retain, enumerate(file_id_dtos))
-      get_cursor = lambda: conn.cursor()
+      
+      dataset_split: Optional[DatasetSplit]
+      
+      # auto-closes connection object
+      with closing(create_connection(self.sqlite_db_path)) as conn:
+        # auto-commit to the database
+        with conn:
+          with closing(conn.cursor()) as cur:
+            dataset_split: DatasetSplit = get_dataset_split(cur, validation_split_coeff=self.validation_split_coeff)
+      
+      assert dataset_split is not None
 
       self.train_dataset = self.dataset_factory(
         BooruCharsCaptionsDatasetParams(
-          file_ids=map(enumeration_to_value, training),
-          get_cursor=get_cursor
+          dataset_split=dataset_split,
+          is_validation=False,
+          sqlite_db_path=self.sqlite_db_path,
         )
       )
       self.validation_dataset = self.dataset_factory(
         BooruCharsCaptionsDatasetParams(
-          file_ids=map(enumeration_to_value, validation),
-          get_cursor=get_cursor
+          dataset_split=dataset_split,
+          is_validation=False,
+          sqlite_db_path=self.sqlite_db_path,
         )
       )
-
-    # Assign test dataset for use in dataloader(s)
-    if stage == "test" or stage is None:
-      if callable(self.close_test):
-        self.close_test()
-      conn: Connection = create_connection(self.sqlite_db_path)
-      cur: Cursor = conn.cursor()
-      self.close_test = self._get_handle_closer(cur, conn)
-      get_first_n_file_ids(cur, self.test_quantity)
-      file_id_dtos: Iterator[BooruFileId] = file_ids_to_dtos(file_ids)
-      get_cursor = lambda: conn.cursor()
-      self.test_dataset = self.dataset_factory(
-        BooruCharsCaptionsDatasetParams(
-          file_ids=file_id_dtos,
-          get_cursor=get_cursor
-        )
-      )
+      self.close_fit = lambda: (dataset.teardown() for dataset in (self.train_dataset, self.validation_dataset))
   
   def teardown(self, stage: Optional[str] = None) -> None:
     if stage == "fit" or stage is None:
@@ -138,11 +104,6 @@ class BooruCharsCaptions(LightningDataModule):
         self.close_fit()
       self.train_dataset = None
       self.validation_dataset = None
-    
-    if stage == "test" or stage is None:
-      if callable(self.close_test):
-        self.close_test()
-      self.test_dataset = None
   
   @staticmethod
   def _pad_example_series(pad_tokens: PadTokensKnownLength, get_ints: GetIntsFromExample, examples: List[Example]) -> List[List[int]]:
@@ -169,7 +130,7 @@ class BooruCharsCaptions(LightningDataModule):
     return batch
   
   def _generic_dataloader(self, dataset: Dataset, num_workers: int) -> DataLoader:
-    return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self.collate_fn)#, num_workers=num_workers)
+    return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self.collate_fn, num_workers=num_workers)
 
   def train_dataloader(self) -> DataLoader:
     assert self.train_dataset is not None
@@ -178,7 +139,3 @@ class BooruCharsCaptions(LightningDataModule):
   def val_dataloader(self) -> DataLoader:
     assert self.validation_dataset is not None
     return self._generic_dataloader(self.validation_dataset, num_workers=self.validation_workers)
-
-  def test_dataloader(self) -> DataLoader:
-    assert self.test_dataset is not None
-    return self._generic_dataloader(self.test_dataset, max_workers=1)
