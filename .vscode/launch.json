@@ -143,8 +143,8 @@
       "console": "integratedTerminal",
       "justMyCode": false,
       "args": [
-        "--accelerator",
-        "mps",
+        // "--accelerator",
+        // "mps",
         "--batch_size",
         // "128",
         "2",

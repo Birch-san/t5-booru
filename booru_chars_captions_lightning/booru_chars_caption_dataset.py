@@ -95,15 +95,18 @@ class _WorkerInfo(Generic[T]):
 TokenizeLabel: TypeAlias = Callable[[str], Iterable[str]]
 EncodeToken: TypeAlias = Callable[[str], int]
 IsKnownToken: TypeAlias = Callable[[int], bool]
-CloseHandle: TypeAlias = Callable[[], None]
+# CloseHandle: TypeAlias = Callable[[], None]
 GetCursor: TypeAlias = Callable[[], Cursor]
 
+@dataclass
+class LateInit:
+  get_cursor: GetCursor
+  # close_conn: CloseHandle
+  tokenize_label: TokenizeLabel
+  encode_token: EncodeToken
+  is_known_token: IsKnownToken
+
 class BooruCharsCaptionsDataset(IterableDataset):
-  get_cursor: Optional[GetCursor]
-  close_conn: Optional[CloseHandle]
-  tokenize_label: Optional[TokenizeLabel]
-  encode_token: Optional[EncodeToken]
-  is_known_token: Optional[IsKnownToken]
   caption_min_tokens: int
   caption_max_crucial_tokens: int
   caption_max_tokens: int
@@ -143,16 +146,16 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self.mask_strategy_label_chance = mask_strategy_label_chance
   
   def teardown(self) -> None:
-    if (callable(self.close_conn)):
-      self.close_conn()
-    self.close_conn = None
-    self.get_cursor = None
+    # if (callable(self.close_conn)):
+    #   self.close_conn()
+    # self.close_conn = None
+    # self.get_cursor = None
+    return
   
-  def _to_caption(self, file_id: BooruFileId) -> List[TagRecord]:
+  def _to_caption(self, file_id: BooruFileId, late_init: LateInit) -> List[TagRecord]:
     # print(f'file_ids for {booru}, {fid}:')
     # cur: Cursor = self.get_cursor()
-    assert callable(self.get_cursor)
-    with closing(self.get_cursor()) as cur:
+    with closing(late_init.get_cursor()) as cur:
       tags: List[TagRecord] = get_tag_records(cur, file_id)
       # print(f'len: {len(tags)}')
       # print(tags)
@@ -164,19 +167,16 @@ class BooruCharsCaptionsDataset(IterableDataset):
   def _needs_shortening(self, token_count: int) -> bool:
     return token_count > self.caption_max_tokens
   
-  def _join_tokens(self, records: List[TagRecord]) -> List[TagRecordWithTokens]:
-    assert callable(self.tokenize_label)
-    assert callable(self.encode_token)
+  def _join_tokens(self, records: List[TagRecord], late_init: LateInit) -> List[TagRecordWithTokens]:
     return [
       TagRecordWithTokens(
         record=record,
-        tokens=[self.encode_token(token) for token in self.tokenize_label(record.tag)]
+        tokens=[late_init.encode_token(token) for token in late_init.tokenize_label(record.tag)]
        ) for record in records
     ]
   
-  def _without_unknown_labels(self, token_havers: Iterable[THasTokens]) -> List[THasTokens]:
-    assert callable(self.is_known_token)
-    return [token_haver for token_haver in token_havers if all(map(self.is_known_token, token_haver.tokens))]
+  def _without_unknown_labels(self, token_havers: Iterable[THasTokens], late_init: LateInit) -> List[THasTokens]:
+    return [token_haver for token_haver in token_havers if all(map(late_init.is_known_token, token_haver.tokens))]
   
   @staticmethod
   def _count_tokens(token_havers: Iterable[HasTokens]) -> int:
@@ -239,9 +239,9 @@ class BooruCharsCaptionsDataset(IterableDataset):
   def _sort_tag_dtos(tag_dtos: List[TagWithTokens]) -> None:
     tag_dtos.sort(key=lambda tag_dto: tag_dto.tag)
   
-  def _tokens_of_suitable_captions(self, candidate: List[TagRecord]) -> Optional[List[TagWithTokens]]:
-    with_tokens: List[TagRecordWithTokens] = self._join_tokens(candidate)
-    without_unknowns: List[TagRecordWithTokens] = self._without_unknown_labels(with_tokens)
+  def _tokens_of_suitable_captions(self, candidate: List[TagRecord], late_init: LateInit) -> Optional[List[TagWithTokens]]:
+    with_tokens: List[TagRecordWithTokens] = self._join_tokens(candidate, late_init)
+    without_unknowns: List[TagRecordWithTokens] = self._without_unknown_labels(with_tokens, late_init)
     tokens_total: int = self._count_tokens(without_unknowns)
     if self._needs_skipping(tokens_total):
       return None
@@ -322,9 +322,9 @@ class BooruCharsCaptionsDataset(IterableDataset):
       masked=masked,
     )
   
-  def _booru_fid_to_example(self, booru_fid: BooruFileId) -> Optional[Example]:
-    tags: List[TagRecord] = self._to_caption(booru_fid)
-    tag_dtos: Optional[List[TagWithTokens]] = self._tokens_of_suitable_captions(tags)
+  def _booru_fid_to_example(self, booru_fid: BooruFileId, late_init: LateInit) -> Optional[Example]:
+    tags: List[TagRecord] = self._to_caption(booru_fid, late_init=late_init)
+    tag_dtos: Optional[List[TagWithTokens]] = self._tokens_of_suitable_captions(tags, late_init=late_init)
     if tag_dtos is None:
       return None
     example: Example = self._to_example(tag_dtos)
@@ -341,14 +341,12 @@ class BooruCharsCaptionsDataset(IterableDataset):
     train_count: int = total-validation_count
 
     tokenizer = BooruPiece()
-    self.tokenize_label: TokenizeLabel = lambda label: tokenizer.tokenize_label(tokenizer.regularize_label(label))
-    self.encode_token: EncodeToken = tokenizer.token_registry.token_to_id
-    self.is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token_id
+    tokenize_label: TokenizeLabel = lambda label: tokenizer.tokenize_label(tokenizer.regularize_label(label))
+    encode_token: EncodeToken = tokenizer.token_registry.token_to_id
+    is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token_id
 
     with closing(create_connection(self.sqlite_db_path)) as conn:
-      self.get_cursor = conn.cursor
-      self.close_conn = conn.close
-      with closing(self.get_cursor()) as cur:
+      with closing(conn.cursor()) as cur:
         file_ids: Iterable[BooruFileId] = get_validation_fids(
           cur=cur,
           validation_quantity=self.dataset_split.validation,
@@ -361,7 +359,14 @@ class BooruCharsCaptionsDataset(IterableDataset):
           rank=worker_id,
           workers=num_workers,
         )
+        late_init: LateInit = LateInit(
+          get_cursor=conn.cursor,
+          # close_conn=conn.close,
+          tokenize_label=tokenize_label,
+          encode_token=encode_token,
+          is_known_token=is_known_token,
+        )
         for booru_fid in file_ids:
-          example: Optional[Example] = self._booru_fid_to_example(booru_fid=booru_fid)
+          example: Optional[Example] = self._booru_fid_to_example(booru_fid=booru_fid, late_init=late_init)
           if example is not None:
             yield example
