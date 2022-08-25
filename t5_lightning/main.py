@@ -4,7 +4,7 @@ from .model import IsPadToken, T5Booru
 from argparse import ArgumentParser, Namespace
 from boorupiece_simple.boorupiece import BooruPiece
 from booru_chars_captions_lightning.booru_chars_captions import PadTokens, BooruCharsCaptions, BooruCharsCaptionsDatasetFactory
-from booru_chars_captions_lightning.booru_chars_caption_dataset import BooruCharsCaptionsDataset, TokenizeLabel, IsKnownToken, EncodeToken
+from booru_chars_captions_lightning.booru_chars_caption_dataset import BooruCharsCaptionsDataset
 from transformers.models.t5.configuration_t5 import T5Config
 
 def main(args: Namespace) -> None:
@@ -27,15 +27,9 @@ def main(args: Namespace) -> None:
   trainer: Trainer = Trainer.from_argparse_args(args, logger=wandb_logger)
 
   pad_tokens: PadTokens = tokenizer.pad_tokens
-  tokenize_label: TokenizeLabel = lambda label: tokenizer.tokenize_label(tokenizer.regularize_label(label))
-  encode_token: EncodeToken = tokenizer.token_registry.token_to_id
-  is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token_id
   dataset_factory: BooruCharsCaptionsDatasetFactory = lambda params: BooruCharsCaptionsDataset.from_argparse_args(
     args,
     params=params,
-    tokenize_label=tokenize_label,
-    encode_token=encode_token,
-    is_known_token=is_known_token,
   )
   datamodule = BooruCharsCaptions.from_argparse_args(
     args,

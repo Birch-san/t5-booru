@@ -6,6 +6,7 @@ from typing_extensions import TypeAlias
 from sqlite3 import Cursor, Connection
 from contextlib import closing
 from operator import add
+from boorupiece_simple.boorupiece import BooruPiece
 
 from .db import create_connection
 from .booru_db import get_tag_records, BooruFileId, TagRecord, TagCategory, DatasetSplit, get_train_fids, get_validation_fids
@@ -100,9 +101,9 @@ GetCursor: TypeAlias = Callable[[], Cursor]
 class BooruCharsCaptionsDataset(IterableDataset):
   get_cursor: Optional[GetCursor]
   close_conn: Optional[CloseHandle]
-  tokenize_label: TokenizeLabel
-  encode_token: EncodeToken
-  is_known_token: IsKnownToken
+  tokenize_label: Optional[TokenizeLabel]
+  encode_token: Optional[EncodeToken]
+  is_known_token: Optional[IsKnownToken]
   caption_min_tokens: int
   caption_max_crucial_tokens: int
   caption_max_tokens: int
@@ -125,9 +126,6 @@ class BooruCharsCaptionsDataset(IterableDataset):
   def __init__(
     self,
     params: BooruCharsCaptionsDatasetParams,
-    tokenize_label: TokenizeLabel,
-    encode_token: EncodeToken,
-    is_known_token: IsKnownToken,
     caption_max_tokens: int,
     caption_min_tokens = 4,
     caption_max_crucial_tokens = 4,
@@ -138,9 +136,6 @@ class BooruCharsCaptionsDataset(IterableDataset):
     self.is_validation = params.is_validation
     self.dataset_split = params.dataset_split
     self.sqlite_db_path = params.sqlite_db_path
-    self.tokenize_label = tokenize_label
-    self.encode_token = encode_token
-    self.is_known_token = is_known_token
     self.caption_min_tokens = caption_min_tokens
     self.caption_max_crucial_tokens = caption_max_crucial_tokens
     self.caption_max_tokens = caption_max_tokens
@@ -170,6 +165,8 @@ class BooruCharsCaptionsDataset(IterableDataset):
     return token_count > self.caption_max_tokens
   
   def _join_tokens(self, records: List[TagRecord]) -> List[TagRecordWithTokens]:
+    assert callable(self.tokenize_label)
+    assert callable(self.encode_token)
     return [
       TagRecordWithTokens(
         record=record,
@@ -178,6 +175,7 @@ class BooruCharsCaptionsDataset(IterableDataset):
     ]
   
   def _without_unknown_labels(self, token_havers: Iterable[THasTokens]) -> List[THasTokens]:
+    assert callable(self.is_known_token)
     return [token_haver for token_haver in token_havers if all(map(self.is_known_token, token_haver.tokens))]
   
   @staticmethod
@@ -341,6 +339,11 @@ class BooruCharsCaptionsDataset(IterableDataset):
 
     total, validation_count = self.dataset_split
     train_count: int = total-validation_count
+
+    tokenizer = BooruPiece()
+    self.tokenize_label: TokenizeLabel = lambda label: tokenizer.tokenize_label(tokenizer.regularize_label(label))
+    self.encode_token: EncodeToken = tokenizer.token_registry.token_to_id
+    self.is_known_token: IsKnownToken = lambda token: token is not tokenizer.token_registry.unk_token_id
 
     with closing(create_connection(self.sqlite_db_path)) as conn:
       self.get_cursor = conn.cursor
